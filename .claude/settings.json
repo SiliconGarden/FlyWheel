@@ -1,0 +1,41 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(brew install:*)",
+      "Bash(wait)",
+      "Bash(brew reinstall:*)",
+      "Bash(ffmpeg -filters)",
+      "Bash(ffmpeg -version)",
+      "Bash(brew search:*)",
+      "Bash(brew info:*)",
+      "Bash(brew link:*)",
+      "Bash(python3 subtitle_reels.py)",
+      "Bash(grep -v \"^  \\\\|Metadata\\\\|vendor_id\\\\|handler\\\\|Stream\\\\|Duration\\\\|bitrate\\\\|fps\\\\|tbr\\\\|tbn\\\\|^\\\\s*$\\\\|SAR\\\\|DAR\\\\|kb/s\\\\|Hz\")",
+      "Bash(python3 subtitle_reels.py --step transcribe)",
+      "Bash(python3 subtitle_reels.py --step burn)",
+      "Bash(python3 subtitle_reels.py --step apply)",
+      "Bash(python3 subtitle_videos.py --step transcribe)",
+      "Bash(python3 subtitle_videos.py --step burn)",
+      "Bash(mv \"original_reels\" \"reel_a_originals\")",
+      "Bash(mv \"reel_source\" \"reel_c_sources\")",
+      "Bash(mv \"reel_subtitles\" \"reel_d_subtitles\")",
+      "Bash(mv \"video_source\" \"video_a_originals\")",
+      "Bash(mv \"video_prepared\" \"video_c_sources\")",
+      "Bash(python3 prepare_reels.py)",
+      "Bash(python3 prepare_videos.py)",
+      "Bash(python3 subtitle_reels.py --step transcribe --input reel_c_sources --output reel_d_subtitles)",
+      "Bash(python3 process_reels.py --step final)",
+      "Bash(python3 process_videos.py --step final)",
+      "Bash(pip install:*)",
+      "Bash(pip3 install:*)",
+      "Bash(python3 -m pip install mediapipe -q)",
+      "Bash(python3 -c \"import mediapipe; print\\(mediapipe.__version__\\)\")",
+      "Bash(python3 prepare_videos.py --force --no-reel)",
+      "Bash(python3 -c \"from mediapipe.python.solutions.face_mesh import FaceMesh; print\\('ok'\\)\")",
+      "Bash(python3 -c \"import mediapipe; print\\(dir\\(mediapipe\\)\\)\")",
+      "Bash(python3 -c ':*)",
+      "Read(//Users/michaellaussegger/Library/Python/3.9/lib/python/site-packages/mediapipe/**)",
+      "Bash(python3 social_linkedin.py --scaffold --force)"
+    ]
+  }
+}

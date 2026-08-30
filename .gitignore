@@ -1,0 +1,46 @@
+# ── Python / OS / editor ──────────────────────────────────────────────
+.venv/
+__pycache__/
+*.py[cod]
+.DS_Store
+
+# Claude Code — keep shared settings, ignore personal ones
+.claude/settings.local.json
+
+# Scratch / archive — not part of the pipeline
+_archive/
+_work/
+
+# ── Pipeline data folders ─────────────────────────────────────────────
+# Keep the folder structure (via .gitkeep), never the contents.
+reel_a_originals/*
+reel_b_outro/*
+reel_c_sources/*
+reel_d_subtitles/*
+reel_e_final/*
+video_a_originals/*
+video_b_outro/*
+video_c_sources/*
+video_d_subtitles/*
+video_e_final/*
+reel_a_thumbnails/*
+video_a_thumbnails/*
+social_assets/*
+social_posts/*
+transcripts/*
+
+!reel_a_originals/.gitkeep
+!reel_b_outro/.gitkeep
+!reel_c_sources/.gitkeep
+!reel_d_subtitles/.gitkeep
+!reel_e_final/.gitkeep
+!video_a_originals/.gitkeep
+!video_b_outro/.gitkeep
+!video_c_sources/.gitkeep
+!video_d_subtitles/.gitkeep
+!video_e_final/.gitkeep
+!reel_a_thumbnails/.gitkeep
+!video_a_thumbnails/.gitkeep
+!social_assets/.gitkeep
+!social_posts/.gitkeep
+!transcripts/.gitkeep
