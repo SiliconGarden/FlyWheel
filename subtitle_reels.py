@@ -324,12 +324,11 @@ def srt_to_ass(srt_path: Path, video_width: int, video_height: int,
     """
     ass_path = srt_path.with_suffix(".ass")
 
-    # Title pill — League Spartan 800, tight leading + negative tracking (homepage H1)
+    # Title pill — League Spartan 800, tight leading + negative tracking (homepage H1).
+    # `title_size` is nominal (drives body + margins); the title itself may shrink
+    # to fit (see the title block).
     title_size = max(72, min(104, int(video_width * 0.090)))
-    t_pad_y    = int(title_size * 0.34)
-    t_lh       = int(title_size * TITLE_LINE_HEIGHT)
-    t_corner   = int(title_size * 0.40)
-    t_spacing  = round(TITLE_TRACKING * title_size)
+    t_spacing  = round(TITLE_TRACKING * title_size)   # Style fallback
     box_w      = int(video_width * 0.84)
 
     # Subtitle body — Karla, no pill, thin outline + soft wide shadow
@@ -423,7 +422,18 @@ def srt_to_ass(srt_path: Path, video_width: int, video_height: int,
         title = title.strip()
         if title and title_seconds > 0:
             t_words, t_parts = markup_parts(title)
-            _, t_breaks = wrap_info(t_words, title_font, cap=2)
+
+            # Shrink the title until it wraps to ≤ 2 lines (down to a floor);
+            # only then allow a 3rd line. Keeps long question-style titles legible.
+            ts, tf = title_size, title_font
+            floor  = max(48, int(title_size * 0.60))
+            while ts > floor and len(wrap_words(t_words, tf, max_text_width) if tf else [[]]) > 2:
+                ts = max(floor, int(ts * 0.92))
+                tf = _load_measuring_font(ts, TITLE_FONT_MEASURE)
+            tpad, tlh   = int(ts * 0.34), int(ts * TITLE_LINE_HEIGHT)
+            tcorn, tsp  = int(ts * 0.40), round(TITLE_TRACKING * ts)
+
+            _, t_breaks = wrap_info(t_words, tf, cap=3)
             tlines, cur = [], []
             for j, p in enumerate(t_parts):
                 cur.append(p)
@@ -434,10 +444,10 @@ def srt_to_ass(srt_path: Path, video_width: int, video_height: int,
                 tlines.append(cur)
 
             # box: first line a full em tall, each extra line adds the tight leading
-            t_box_h = title_size + (len(tlines) - 1) * t_lh + 2 * t_pad_y
-            corner  = min(t_corner, t_box_h // 2 - 2)
+            t_box_h = ts + (len(tlines) - 1) * tlh + 2 * tpad
+            corner  = min(tcorn, t_box_h // 2 - 2)
 
-            gap = int(title_size * 0.35)
+            gap = int(ts * 0.35)
             ty2 = max_body_top - gap
             ty1 = ty2 - t_box_h
 
@@ -445,7 +455,7 @@ def srt_to_ass(srt_path: Path, video_width: int, video_height: int,
                 fy0   = face_vspan[0] * video_height
                 fy1   = face_vspan[1] * video_height
                 fcrit = fy0 + 0.55 * (fy1 - fy0)   # eyes/mouth — chin may be grazed
-                m     = int(title_size * 0.30)
+                m     = int(ts * 0.30)
                 if ty1 < fcrit + m and ty2 > fy0 - m:         # covers the upper face
                     below_y1 = int(fy1 + m)
                     above_y2 = int(fy0 - m)
@@ -458,9 +468,10 @@ def srt_to_ass(srt_path: Path, video_width: int, video_height: int,
 
             ty1 = max(ty1, safe_top)                           # running position (above body)
             # cover position — low, near the safe bottom (no subtitle competing yet)
-            cover_ty1 = max(ty1, safe_bottom - t_box_h - int(title_size * 0.15))
+            cover_ty1 = max(ty1, safe_bottom - t_box_h - int(ts * 0.15))
             t_shape = ass_rounded_rect(box_w, t_box_h, corner)
             fade  = f"\\fad(0,{TITLE_FADE_OUT_MS})"            # no fade-in → visible on frame 0
+            fs    = f"\\fs{ts}\\fsp{tsp}"
             t1, t2 = TITLE_COVER_MS, TITLE_COVER_MS + TITLE_MOVE_MS
             s0, s1 = format_ass_time(0.0), format_ass_time(title_seconds)
             f.write(
@@ -468,13 +479,13 @@ def srt_to_ass(srt_path: Path, video_width: int, video_height: int,
                 f"{{\\an7\\move({x1},{cover_ty1},{x1},{ty1},{t1},{t2})\\p1{fade}}}"
                 f"{t_shape}{{\\p0}}\n"
             )
-            base_cy = t_pad_y + int(title_size * 0.52)
+            base_cy = tpad + int(ts * 0.52)
             for i, line in enumerate(tlines):
-                dy = base_cy + i * t_lh
+                dy = base_cy + i * tlh
                 f.write(
                     f"Dialogue: 1,{s0},{s1},TitleText,,{margin_l},{margin_r},0,,"
                     f"{{\\an5\\move({cx},{cover_ty1 + dy},{cx},{ty1 + dy},{t1},{t2})"
-                    f"{fade}}}{' '.join(line)}\n"
+                    f"{fs}{fade}}}{' '.join(line)}\n"
                 )
 
         # ── Subtitles (body text, no pill) ─────────────────────────────────
