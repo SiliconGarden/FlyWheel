@@ -28,6 +28,8 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+import titlekit
+
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
@@ -406,6 +408,7 @@ def main():
             transcribe_to_folder(out_path, transcripts_dir,
                                  args.model, args.lang, args.max_words,
                                  force=force, force_all=force_all)
+            titlekit.ensure_title_file(transcripts_dir, video.stem)
         if thumbnails_dir and out_path.exists():
             extract_thumbnails(out_path, thumbnails_dir,
                                args.thumb_count, args.thumb_oversample, force)

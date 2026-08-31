@@ -27,13 +27,16 @@ Two wrappers, `process_reels.py` and `process_videos.py`, each run 3 steps:
 1. **prepare** (`prepare_reels.py` / `prepare_videos.py`)
    - ffmpeg: voice audio chain + loudness norm + scale → `*_c_sources/`
    - **Whisper transcription** → `transcripts/<stem>/transcript.words.json` + `transcript.txt`
+   - **`transcripts/<stem>/title.txt`** — created with a cleaned-filename default (see `titlekit.py`)
    - thumbnail extraction → `*_a_thumbnails/staging/`
    - videos only: face-centred portrait crop → `reel_c_sources/<name>`
 2. **subtitles** (`subtitle_reels.py` / `subtitle_videos.py`)
    - builds `.srt` + `.ass` **from the shared transcript** (`build_srt_from_transcript`),
-     re-applying an edited `transcript.txt` if it's newer than the SRT, then burns subs
+     re-applying an edited `transcript.txt` if it's newer than the SRT, then burns
+     the subtitles **and the title** (`srt_to_ass` emits both layers)
    - only falls back to running Whisper itself if `transcripts/<stem>/` is missing
    - output: `*_d_subtitles/<stem>/` (one folder per clip)
+   - re-burns when `transcript.txt` **or** `title.txt` is newer than the burned clip
 3. **final** — appends `*_b_outro/`'s clip → `*_e_final/`
 
 **Whisper runs in step 1, not step 2.** `--model` / `--lang` / `--max-words`
@@ -61,6 +64,11 @@ Editing transcripts: fix `transcripts/<name>/transcript.txt` (one line per
 subtitle entry — never add/remove lines). `*word*` → yellow emphasis in the
 burn. Re-running the pipeline auto-applies edits before burning.
 
+Titles: `transcripts/<name>/title.txt`, one line, empty = no title. Rendered in
+the turquoise pill above the subtitle for the first 10 s, kept off the face.
+Subtitles are white on a ~75 %-opaque black pill (no karaoke word-highlight).
+Geometry + face-avoidance live in each `srt_to_ass`; text helpers in `titlekit.py`.
+
 ## Folder map
 
 ```
@@ -70,7 +78,8 @@ reel_c_sources/   video_c_sources/     prepared clips (reel_c also holds video-d
 reel_d_subtitles/<stem>/  video_d_subtitles/<stem>/   .srt/.ass/.words.json + burned clip
 reel_e_final/     video_e_final/       clip + outro
 reel_a_thumbnails/ video_a_thumbnails/ staging/ + approved/
-transcripts/<stem>/  transcript.words.json + transcript.txt   ← subtitle source of truth
+transcripts/<stem>/  transcript.words.json + transcript.txt + title.txt   ← subtitle/title source of truth
+titlekit.py          title-file helpers (default_title / ensure_title_file / load_title) + detect_face_vspan
 social_assets/ social_posts/  social_post.py / social_linkedin.py  (separate "social" tooling)
 ```
 

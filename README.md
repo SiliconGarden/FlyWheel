@@ -51,12 +51,16 @@ video_a_thumbnails/       ← candidate thumbnail frames (staging/ + approved/)
 ### Shared
 
 ```
-transcripts/<name>/     ← transcript.words.json (word timing) + transcript.txt (edit this!)
+transcripts/<name>/
+    transcript.words.json   ← word timing (generated)
+    transcript.txt          ← subtitle text — edit this!
+    title.txt               ← on-screen title — edit this! (empty = no title)
 ```
 
-The `transcripts/` folder is the single source of truth for subtitle text. It is
-written by the **prepare** step and keyed by the clip's file name (stem), so a
-horizontal video and its auto-cropped reel share one transcript.
+The `transcripts/` folder is the single source of truth for subtitle + title
+text. It is written by the **prepare** step and keyed by the clip's file name
+(stem), so a horizontal video and its auto-cropped reel share one transcript
+and one title.
 
 > **Auto reel crop:** The prepare step also produces a portrait reel version of each horizontal video (720×1280) and saves it to `reel_c_sources/`. Face detection is used to centre the crop on the speaker. Use `--no-reel` to skip this.
 >
@@ -83,8 +87,8 @@ Each pipeline runs three steps in order:
 
 | Step | Script | What it does |
 |------|--------|--------------|
-| **1 — prepare** | `prepare_reels.py` / `prepare_videos.py` | Audio optimisation + loudness normalisation + scale to target resolution · **Whisper transcription → `transcripts/<name>/`** · thumbnail extraction · (videos) portrait reel crop |
-| **2 — subtitles** | `subtitle_reels.py` / `subtitle_videos.py` | Build SRT from the shared transcript (re-applying any edited `transcript.txt`) + burn subtitles into video. Falls back to running Whisper itself only if no shared transcript exists. |
+| **1 — prepare** | `prepare_reels.py` / `prepare_videos.py` | Audio optimisation + loudness normalisation + scale to target resolution · **Whisper transcription + `title.txt` → `transcripts/<name>/`** · thumbnail extraction · (videos) portrait reel crop |
+| **2 — subtitles** | `subtitle_reels.py` / `subtitle_videos.py` | Build SRT from the shared transcript (re-applying any edited `transcript.txt`) + burn subtitles **and the title** into the video. Falls back to running Whisper itself only if no shared transcript exists. |
 | **3 — final** | _(built into process script)_ | Concatenate subtitled clip + outro |
 
 > Whisper runs in **step 1**, not step 2. `--model` / `--lang` therefore only
@@ -143,11 +147,31 @@ One line per subtitle entry. You can fix typos, punctuation, or emphasis here. T
 
 ### Word emphasis
 
-Wrap a word in `*asterisks*` to highlight it in **yellow** in the burned subtitles:
+Wrap a word in `*asterisks*` to highlight it in **yellow** — works in both the subtitles and the title:
 
 ```
 This is a *really* important point.
 ```
+
+---
+
+## Titles
+
+Each clip can show a **title** in the same turquoise pill the subtitles use,
+sitting directly above the subtitle for the first **10 seconds**, then fading
+out. The title is kept clear of the speaker's face and inside the safe zone.
+
+Titles live next to the transcript:
+
+```
+transcripts/myvideo/title.txt      ← one line of text
+```
+
+- Auto-created on the **prepare** step, pre-filled with a title derived from the
+  file name (camera timestamps like `, am 30.08.26 um 21.34` are stripped).
+- Edit it to change the on-screen title. An **empty file = no title**.
+- Shared by a horizontal video and its portrait reel crop (same file name).
+- Editing it re-burns the clip on the next run (same as editing `transcript.txt`).
 
 ---
 
@@ -171,15 +195,20 @@ All three options are consumed by the **prepare** step. Run it (or the full
 
 ---
 
-## Subtitle Style
+## Subtitle & Title Style
 
-- **Font:** League Spartan
-- **Background:** turquoise rounded pill
-- **Active (spoken) word:** black
-- **Inactive words:** white
-- **`*Emphasised*` words:** yellow
-- Reels: two lines of text, larger font
-- Videos: single line, smaller font, YouTube safe area
+| | Subtitle | Title (first 10 s) |
+|---|---|---|
+| Font | League Spartan | League Spartan |
+| Background | **black rounded pill, ~75 % opaque** | **turquoise rounded pill** |
+| Text | white (`*emphasis*` → yellow) | white (`*emphasis*` → yellow) |
+| Karaoke word-highlight | no | no |
+| Position | bottom of the safe zone | directly above the subtitle |
+| Lines | reels 2 · videos 1 | reels ≤ 2 · videos 1 |
+
+Both layers stay inside the title-safe area; the title is nudged vertically to
+avoid the speaker's face (Haar-cascade detection, sampled at burn time — falls
+back to a safe-zone clamp if opencv is missing or no face is found).
 
 ---
 

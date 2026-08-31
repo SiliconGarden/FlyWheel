@@ -33,6 +33,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+import titlekit
+
 try:
     from PIL import ImageFont
 except ImportError:
@@ -44,12 +46,27 @@ except ImportError:
 SUPPORTED_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
 FONT_NAME = "League Spartan"
 
-# ASS colors (ABGR format: &HAABBGGRR)
-TURQUOISE = "&H1EE6E15C"   # #5CE1E6 — pill background, 88 % opaque (matches social posts)
-BLACK     = "&H00000000"   # active / spoken word
-WHITE     = "&H00FFFFFF"   # inactive words
-YELLOW    = "&H005BF6FF"   # #fff65b — *asterisk* emphasis
-NONE      = "&H00000000"
+# ASS colors (ABGR format: &HAABBGGRR — AA: 00 = opaque, FF = transparent)
+TURQUOISE   = "&H1EE6E15C"   # #5CE1E6 — title pill, ~88 % opaque (matches social posts)
+SUBTITLE_BG = "&H40000000"   # black, ~75 % opaque — subtitle pill
+WHITE       = "&H00FFFFFF"   # subtitle / title text
+YELLOW      = "&H005BF6FF"   # #fff65b — *asterisk* emphasis
+NONE        = "&H00000000"
+
+# Title layer
+TITLE_MAX_SECONDS = 10.0
+TITLE_FADE_IN_MS  = 300
+TITLE_FADE_OUT_MS = 400
+
+
+def _join_with_breaks(parts: list[str], break_after: set[int]) -> str:
+    """Join word spans with '\\N' after each index in break_after, else a space."""
+    out: list[str] = []
+    for j, p in enumerate(parts):
+        if j > 0:
+            out.append("\\N" if (j - 1) in break_after else " ")
+        out.append(p)
+    return "".join(out)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -79,6 +96,16 @@ def get_video_dimensions(video_path: Path) -> tuple[int, int]:
         if s.get("codec_type") == "video":
             return s["width"], s["height"]
     raise RuntimeError(f"Cannot read video dimensions: {video_path}")
+
+
+def get_video_duration(video_path: Path) -> float:
+    cmd = ["ffprobe", "-v", "quiet", "-print_format", "json",
+           "-show_format", str(video_path)]
+    try:
+        data = json.loads(subprocess.run(cmd, capture_output=True, text=True).stdout)
+        return float(data["format"]["duration"])
+    except (ValueError, KeyError):
+        return 0.0
 
 
 def format_srt_time(seconds: float) -> str:
@@ -259,17 +286,20 @@ def ass_rounded_rect(bw: float, bh: float, r: float) -> str:
 
 
 
-def srt_to_ass(srt_path: Path, video_width: int, video_height: int) -> Path:
+def srt_to_ass(srt_path: Path, video_width: int, video_height: int,
+               title: str = "", title_seconds: float = TITLE_MAX_SECONDS,
+               face_vspan: "tuple[float, float] | None" = None) -> Path:
     """
-    Convert SRT → ASS with turquoise rounded-rectangle backgrounds.
-    If a .words.json sidecar exists, active words are highlighted in black
-    as they are spoken (karaoke-style). Otherwise plain white text is used.
+    Convert SRT → ASS. Two stacked, bottom-anchored, centre-aligned layers:
 
-    Each subtitle produces:
-      Layer 0 — turquoise rounded-rect background (full line duration)
-      Layer 1 — text events:
-                  • with sidecar: one event per word showing active word in black
-                  • without sidecar: one event per line in white
+      • Subtitle — white text on a ~75 %-opaque black rounded pill, one event per
+        line, shown for that line's full duration. (No karaoke word highlight.)
+      • Title    — optional single line in the turquoise pill (same look the
+        subtitles used to have), sitting directly above the subtitle block,
+        shown for the first `title_seconds` seconds with a fade in/out. Nudged
+        vertically to avoid `face_vspan` (normalised (y0, y1)) when given.
+
+    Both stay inside the title-safe area (10 % margin from each edge).
     """
     ass_path = srt_path.with_suffix(".ass")
 
@@ -280,10 +310,8 @@ def srt_to_ass(srt_path: Path, video_width: int, video_height: int) -> Path:
     box_w     = int(video_width * 0.84)
     corner_r  = int(font_size * 0.40)
 
-    # Anchor to the bottom of the title-safe area (10 % margin from each edge).
-    # The box bottom sits just inside the safe boundary; box top must stay
-    # within the bottom third (y > video_height * 0.67).
-    safe_bottom = int(video_height * 0.90)
+    safe_bottom       = int(video_height * 0.90)
+    safe_top          = int(video_height * 0.10)
     safe_top_of_third = int(video_height * 0.67)
 
     cx = video_width // 2
@@ -300,37 +328,47 @@ def srt_to_ass(srt_path: Path, video_width: int, video_height: int) -> Path:
 
     measuring_font = _load_measuring_font(font_size)
 
+    def wrap_info(words: list[str], max_lines: int) -> "tuple[int, set[int]]":
+        """(line_count, break-after-word-index set) predicted for `words`."""
+        if measuring_font is None or not words:
+            return (min(2, max_lines), set())
+        groups = wrap_words(words, measuring_font, max_text_width)[:max_lines]
+        breaks: set[int] = set()
+        wi = 0
+        for g in groups[:-1]:
+            wi += len(g)
+            breaks.add(wi - 1)
+        return (max(1, len(groups)), breaks)
+
     def box_geometry(n_lines: int):
-        """Box height/position for a chunk that renders as n_lines lines —
-        bottom-anchored, so a 1-line chunk gets a shorter box instead of
-        the fixed 2-line box floating extra empty space above the text."""
+        """Bottom-anchored subtitle box for a chunk that renders as n_lines lines."""
         box_h = n_lines * line_h + 2 * pad_y
         y2 = safe_bottom - int(font_size * 0.20)
         y1 = y2 - box_h
         if y1 < safe_top_of_third:
             y1 = safe_top_of_third
             y2 = y1 + box_h
-        cy = y1 + box_h // 2
-        return y1, box_h, cy
+        return y1, box_h, y1 + box_h // 2
 
-    # Load word timing sidecar (generated by --step transcribe)
-    words_path = srt_path.with_suffix(".words.json")
-    words_lookup: dict[int, list[dict]] = {}
-    if words_path.exists():
-        for entry in json.loads(words_path.read_text(encoding="utf-8")):
-            if entry.get("words"):
-                words_lookup[entry["index"]] = entry["words"]
+    def markup_parts(text: str) -> "tuple[list[str], list[str]]":
+        tokens = parse_markup(text)               # [(word, is_emph), ...]
+        words  = [w for w, _ in tokens]
+        parts  = [f"{{\\c{YELLOW if emph else WHITE}}}{w}" for w, emph in tokens]
+        return words, parts
 
-    # Parse SRT (capture index for sidecar lookup)
+    # Parse SRT; remember the tallest subtitle chunk so the title anchors just
+    # above it (a clip whose lines are all 1-line gets a snug title).
     subtitles = []
+    max_sub_lines = 1
     for block in srt_path.read_text(encoding="utf-8").strip().split("\n\n"):
         lines = block.strip().split("\n")
         if len(lines) < 3:
             continue
-        idx   = int(lines[0])
         start, end = (parse_srt_time(t) for t in lines[1].split(" --> "))
-        text  = " ".join(lines[2:])
-        subtitles.append((idx, start, end, text))
+        text = " ".join(lines[2:])
+        subtitles.append((start, end, text))
+        words = [w for w, _ in parse_markup(text)]
+        max_sub_lines = max(max_sub_lines, wrap_info(words, 2)[0])
 
     with open(ass_path, "w", encoding="utf-8") as f:
         f.write(
@@ -347,96 +385,70 @@ def srt_to_ass(srt_path: Path, video_width: int, video_height: int) -> Path:
             "Alignment, MarginL, MarginR, MarginV, Encoding\n"
             f"Style: Text,{FONT_NAME},{font_size},{WHITE},{NONE},{NONE},{NONE},"
             f"-1,0,0,0,100,100,0,0,1,0,0,5,0,0,0,1\n"
-            f"Style: BG,{FONT_NAME},{font_size},{TURQUOISE},{NONE},{NONE},{NONE},"
+            f"Style: SubBG,{FONT_NAME},{font_size},{SUBTITLE_BG},{NONE},{NONE},{NONE},"
+            f"0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1\n"
+            f"Style: TitleBG,{FONT_NAME},{font_size},{TURQUOISE},{NONE},{NONE},{NONE},"
             f"0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1\n\n"
             "[Events]\n"
             "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
         )
 
-        for idx, start, end, text in subtitles:
-            # Parse markup: *word* → yellow; plain words → white
-            tokens = parse_markup(text)   # [(word, is_highlighted), ...]
-            display_words = [w for w, _ in tokens]
+        # ── Title (optional) — fixed position above the max subtitle extent ──
+        title = title.strip()
+        if title and title_seconds > 0:
+            t_words, t_parts = markup_parts(title)
+            n_tlines, t_breaks = wrap_info(t_words, max_lines=2)
+            t_box_h = n_tlines * line_h + 2 * pad_y
 
-            # Predict how many lines this chunk will wrap to, so the pill
-            # can be sized to fit (falls back to the fixed 2-line box if
-            # the font isn't available for measurement).
-            break_after: set[int] = set()
-            if measuring_font is not None:
-                groups = wrap_words(display_words, measuring_font, max_text_width)
-                n_lines = max(1, len(groups))
-                word_i = 0
-                for g in groups[:-1]:
-                    word_i += len(g)
-                    break_after.add(word_i - 1)
-            else:
-                n_lines = 2
+            sub_top = box_geometry(max_sub_lines)[0]   # top of the tallest subtitle
+            gap     = int(font_size * 0.30)
+            ty2 = sub_top - gap
+            ty1 = ty2 - t_box_h
 
-            y1, box_h, cy = box_geometry(n_lines)
-            bg_shape = ass_rounded_rect(box_w, box_h, corner_r)
-            pos_tag  = f"{{\\an5\\pos({cx},{cy})}}"
+            if face_vspan:
+                fy0   = face_vspan[0] * video_height
+                fy1   = face_vspan[1] * video_height
+                fcrit = fy0 + 0.55 * (fy1 - fy0)   # eyes/mouth — chin may be grazed
+                m     = int(font_size * 0.30)
+                if ty1 < fcrit + m and ty2 > fy0 - m:         # covers the upper face
+                    below_y1 = int(fy1 + m)
+                    above_y2 = int(fy0 - m)
+                    if below_y1 + t_box_h <= sub_top - gap:    # room below the face
+                        ty1, ty2 = below_y1, below_y1 + t_box_h
+                    elif above_y2 - t_box_h >= safe_top:       # room above the face
+                        ty1, ty2 = above_y2 - t_box_h, above_y2
+                    else:
+                        ty1, ty2 = safe_top, safe_top + t_box_h
 
-            # Layer 0: turquoise pill background (full subtitle duration)
-            s_bg, e_bg = format_ass_time(start), format_ass_time(end)
+            ty1 = max(ty1, safe_top)
+            t_cy = ty1 + t_box_h // 2
+            t_shape = ass_rounded_rect(box_w, t_box_h, corner_r)
+            fade = f"\\fad({TITLE_FADE_IN_MS},{TITLE_FADE_OUT_MS})"
+            s0, s1 = format_ass_time(0.0), format_ass_time(title_seconds)
             f.write(
-                f"Dialogue: 0,{s_bg},{e_bg},BG,,0,0,0,,"
-                f"{{\\an7\\pos({x1},{y1})\\p1}}{bg_shape}{{\\p0}}\n"
+                f"Dialogue: 0,{s0},{s1},TitleBG,,0,0,0,,"
+                f"{{\\an7\\pos({x1},{ty1})\\p1{fade}}}{t_shape}{{\\p0}}\n"
+            )
+            f.write(
+                f"Dialogue: 1,{s0},{s1},Text,,{margin_l},{margin_r},0,,"
+                f"{{\\an5\\pos({cx},{t_cy}){fade}}}{_join_with_breaks(t_parts, t_breaks)}\n"
             )
 
-            def word_color(j: int, active_k: int, is_marked: bool) -> str:
-                if is_marked:
-                    return YELLOW
-                return BLACK if j == active_k else WHITE
-
-            def join_with_breaks(parts: list[str]) -> str:
-                out = []
-                for j, p in enumerate(parts):
-                    if j > 0:
-                        out.append("\\N" if (j - 1) in break_after else " ")
-                    out.append(p)
-                return "".join(out)
-
-            line_words = words_lookup.get(idx)
-            if line_words:
-                n_disp, n_timed = len(display_words), len(line_words)
-
-                if n_disp == n_timed:
-                    timed = [
-                        {"start": lw.get("start", start), "end": lw.get("end", end)}
-                        for lw in line_words
-                    ]
-                else:
-                    # Word count changed — spread timing evenly
-                    duration = end - start
-                    timed = [
-                        {"start": start + i * duration / n_disp,
-                         "end":   start + (i + 1) * duration / n_disp}
-                        for i in range(n_disp)
-                    ]
-
-                # Layer 1: one event per word — active=black, inactive=white, marked=yellow
-                for k, wi in enumerate(timed):
-                    w_start = wi["start"]
-                    w_end   = timed[k + 1]["start"] if k < len(timed) - 1 else end
-                    s, e_w  = format_ass_time(w_start), format_ass_time(w_end)
-                    parts = [
-                        f"{{\\c{word_color(j, k, marked)}}}{word}"
-                        for j, (word, marked) in enumerate(tokens)
-                    ]
-                    f.write(
-                        f"Dialogue: 1,{s},{e_w},Text,,{margin_l},{margin_r},0,,"
-                        f"{pos_tag}{join_with_breaks(parts)}\n"
-                    )
-            else:
-                # No word timing — show line with markup colors (no karaoke)
-                parts = [
-                    f"{{\\c{YELLOW if marked else WHITE}}}{word}"
-                    for word, marked in tokens
-                ]
-                f.write(
-                    f"Dialogue: 1,{s_bg},{e_bg},Text,,{margin_l},{margin_r},0,,"
-                    f"{pos_tag}{join_with_breaks(parts)}\n"
-                )
+        # ── Subtitles ──────────────────────────────────────────────────────
+        for start, end, text in subtitles:
+            words, parts = markup_parts(text)
+            n_lines, breaks = wrap_info(words, max_lines=2)
+            y1, box_h, cy = box_geometry(n_lines)
+            bg_shape = ass_rounded_rect(box_w, box_h, corner_r)
+            s_bg, e_bg = format_ass_time(start), format_ass_time(end)
+            f.write(
+                f"Dialogue: 0,{s_bg},{e_bg},SubBG,,0,0,0,,"
+                f"{{\\an7\\pos({x1},{y1})\\p1}}{bg_shape}{{\\p0}}\n"
+            )
+            f.write(
+                f"Dialogue: 1,{s_bg},{e_bg},Text,,{margin_l},{margin_r},0,,"
+                f"{{\\an5\\pos({cx},{cy})}}{_join_with_breaks(parts, breaks)}\n"
+            )
 
     return ass_path
 
@@ -606,14 +618,24 @@ def apply_transcript(video_path: Path, output_dir: Path,
 
 
 def burn_subtitles(video_path: Path, srt_path: Path, output_dir: Path,
-                   force: bool = False) -> Path:
+                   force: bool = False, title: str = "") -> Path:
     out_path = output_dir / video_path.name
     if out_path.exists() and not force:
         print(f"⏭️  Skipping (video exists): {out_path.name}")
         return out_path
 
     width, height = get_video_dimensions(video_path)
-    ass_path = srt_to_ass(srt_path, width, height)
+    duration      = get_video_duration(video_path)
+    face_vspan    = titlekit.detect_face_vspan(video_path) if title.strip() else None
+    if title.strip():
+        where = f"face at {face_vspan[0]:.2f}–{face_vspan[1]:.2f}" if face_vspan else "no face detected"
+        print(f"🏷  Title: “{title.strip()}”  ({where})")
+    ass_path = srt_to_ass(
+        srt_path, width, height,
+        title=title,
+        title_seconds=min(TITLE_MAX_SECONDS, duration) if duration else TITLE_MAX_SECONDS,
+        face_vspan=face_vspan,
+    )
 
     # Copy ASS to a temp path with no special characters so ffmpeg's
     # filter parser doesn't trip over commas, spaces, or # in the filename.
@@ -697,6 +719,15 @@ def main():
             for txt in [shared_txt, local_txt]
         ) or (force and any(txt.exists() for txt in [shared_txt, local_txt]))
 
+        # Title layer — transcripts/<stem>/title.txt (default = cleaned file name)
+        titlekit.ensure_title_file(transcripts_dir, video.stem)
+        title = titlekit.load_title(transcripts_dir, video.stem)
+        burned = video_dir / video.name
+        title_changed = (
+            burned.exists()
+            and titlekit.title_mtime(transcripts_dir, video.stem) > burned.stat().st_mtime
+        )
+
         if args.step == "apply":
             srt = apply_transcript(video, video_dir, transcripts_dir)
 
@@ -719,7 +750,11 @@ def main():
             if txt_has_edits:
                 print(f"📝 TXT is newer than SRT — applying edits first...")
                 srt = apply_transcript(video, video_dir, transcripts_dir)
-            burn_subtitles(video, srt, video_dir, force=force or txt_has_edits)
+            if title_changed and not (force or txt_has_edits):
+                print(f"🏷  title.txt is newer than the burned video — re-burning...")
+            burn_subtitles(video, srt, video_dir,
+                           force=force or txt_has_edits or title_changed,
+                           title=title)
 
     print(f"\n🎉 Done! Processed {len(videos)} video(s).")
 
