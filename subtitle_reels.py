@@ -50,8 +50,7 @@ TITLE_FONT_MEASURE = "LeagueSpartan-ExtraBold"
 BODY_FONT       = "Karla"                     # subtitle body text (see assets/Karla)
 
 # Title type — mirrors the homepage H1 (League Spartan 800, tight)
-TITLE_LINE_HEIGHT = 0.95    # ~homepage line-height: 0.92, a touch looser for burn-in
-TITLE_TRACKING    = -0.035  # homepage letter-spacing, in em
+TITLE_TRACKING = -0.035    # homepage letter-spacing, in em
 
 # ASS colors (ABGR format: &HAABBGGRR — AA: 00 = opaque, FF = transparent)
 TURQUOISE = "&H1EE6E15C"   # #5CE1E6 — title pill, ~88 % opaque (matches social posts)
@@ -64,8 +63,9 @@ NONE      = "&H00000000"
 # Title layer
 TITLE_MAX_SECONDS   = 10.0
 TITLE_FADE_OUT_MS   = 400
-TITLE_COVER_MS      = 1200   # title holds a low "cover" position this long …
-TITLE_MOVE_MS       = 400    # … then slides up to sit above the subtitle
+TITLE_COVER_MS      = 1200   # title holds a low, enlarged "cover" state this long …
+TITLE_MOVE_MS       = 400    # … then slides up + shrinks to sit above the subtitle
+TITLE_COVER_SCALE   = 1.15   # how much bigger the title is on the cover
 COVER_HOLD_SECONDS  = (TITLE_COVER_MS + TITLE_MOVE_MS) / 1000  # subtitles start after
 BODY_SCALE          = 0.70   # subtitle size relative to the title
 SAFE_BOTTOM_FRAC    = 0.92   # both layers sit this low (block moved down for the cover)
@@ -430,8 +430,9 @@ def srt_to_ass(srt_path: Path, video_width: int, video_height: int,
             while ts > floor and len(wrap_words(t_words, tf, max_text_width) if tf else [[]]) > 2:
                 ts = max(floor, int(ts * 0.92))
                 tf = _load_measuring_font(ts, TITLE_FONT_MEASURE)
-            tpad, tlh   = int(ts * 0.34), int(ts * TITLE_LINE_HEIGHT)
-            tcorn, tsp  = int(ts * 0.40), round(TITLE_TRACKING * ts)
+            tpad = int(ts * 0.40)
+            tsp  = round(TITLE_TRACKING * ts)
+            lh   = int(ts * 1.16)                              # ≈ libass leading for \N text
 
             _, t_breaks = wrap_info(t_words, tf, cap=3)
             tlines, cur = [], []
@@ -442,10 +443,11 @@ def srt_to_ass(srt_path: Path, video_width: int, video_height: int,
                     cur = []
             if cur:
                 tlines.append(cur)
+            n_tl    = len(tlines)
+            text_nl = "\\N".join(" ".join(g) for g in tlines)
 
-            # box: first line a full em tall, each extra line adds the tight leading
-            t_box_h = ts + (len(tlines) - 1) * tlh + 2 * tpad
-            corner  = min(tcorn, t_box_h // 2 - 2)
+            t_box_h = ts + (n_tl - 1) * lh + 2 * tpad          # running pill height
+            corner  = min(int(ts * 0.40), t_box_h // 2 - 2)
 
             gap = int(ts * 0.35)
             ty2 = max_body_top - gap
@@ -466,27 +468,35 @@ def srt_to_ass(srt_path: Path, video_width: int, video_height: int,
                     else:
                         ty1, ty2 = safe_top, safe_top + t_box_h
 
-            ty1 = max(ty1, safe_top)                           # running position (above body)
-            # cover position — low, near the safe bottom (no subtitle competing yet)
-            cover_ty1 = max(ty1, safe_bottom - t_box_h - int(ts * 0.15))
-            t_shape = ass_rounded_rect(box_w, t_box_h, corner)
-            fade  = f"\\fad(0,{TITLE_FADE_OUT_MS})"            # no fade-in → visible on frame 0
-            fs    = f"\\fs{ts}\\fsp{tsp}"
-            t1, t2 = TITLE_COVER_MS, TITLE_COVER_MS + TITLE_MOVE_MS
-            s0, s1 = format_ass_time(0.0), format_ass_time(title_seconds)
+            ty1 = max(ty1, safe_top)
+            run_cy = ty1 + t_box_h // 2                        # running centre
+
+            # cover state — enlarged, low, centred so the scaled pill sits just
+            # inside the safe bottom (nothing else on screen yet)
+            scale       = TITLE_COVER_SCALE
+            cover_box_h = int(t_box_h * scale)
+            cover_cy    = safe_bottom - cover_box_h // 2 - int(ts * 0.12)
+            cover_cy    = max(cover_cy, safe_top + cover_box_h // 2, run_cy)
+
+            t_shape   = ass_rounded_rect(box_w, t_box_h, corner)
+            fade      = f"\\fad(0,{TITLE_FADE_OUT_MS})"        # no fade-in → visible on frame 0
+            S         = round(scale * 100)
+            cover_fs  = int(ts * scale)
+            cover_fsp = round(TITLE_TRACKING * cover_fs)
+            t1, t2    = TITLE_COVER_MS, TITLE_COVER_MS + TITLE_MOVE_MS
+            s0, s1    = format_ass_time(0.0), format_ass_time(title_seconds)
             f.write(
                 f"Dialogue: 0,{s0},{s1},TitleBG,,0,0,0,,"
-                f"{{\\an7\\move({x1},{cover_ty1},{x1},{ty1},{t1},{t2})\\p1{fade}}}"
+                f"{{\\an5\\move({cx},{cover_cy},{cx},{run_cy},{t1},{t2})"
+                f"\\fscx{S}\\fscy{S}\\t({t1},{t2},\\fscx100\\fscy100)\\p1{fade}}}"
                 f"{t_shape}{{\\p0}}\n"
             )
-            base_cy = tpad + int(ts * 0.52)
-            for i, line in enumerate(tlines):
-                dy = base_cy + i * tlh
-                f.write(
-                    f"Dialogue: 1,{s0},{s1},TitleText,,{margin_l},{margin_r},0,,"
-                    f"{{\\an5\\move({cx},{cover_ty1 + dy},{cx},{ty1 + dy},{t1},{t2})"
-                    f"{fs}{fade}}}{' '.join(line)}\n"
-                )
+            f.write(
+                f"Dialogue: 1,{s0},{s1},TitleText,,{margin_l},{margin_r},0,,"
+                f"{{\\an5\\move({cx},{cover_cy},{cx},{run_cy},{t1},{t2})"
+                f"\\fs{cover_fs}\\fsp{cover_fsp}\\t({t1},{t2},\\fs{ts}\\fsp{tsp})"
+                f"{fade}}}{text_nl}\n"
+            )
 
         # ── Subtitles (body text, no pill) ─────────────────────────────────
         for start, end, text in subtitles:
