@@ -51,6 +51,7 @@ transcript is first written; changing it later needs `--forceall`.
 ## Common commands
 
 ```bash
+python3 pending.py                       # list clips needing prepare/subtitle/re-burn/final
 python3 process_reels.py                 # full reel pipeline (skips existing)
 python3 process_videos.py                # full horizontal pipeline
 python3 process_reels.py --step prepare  # just prepare (→ transcripts to review)
@@ -80,6 +81,7 @@ reel_e_final/     video_e_final/       clip + outro
 reel_a_thumbnails/ video_a_thumbnails/ staging/ + approved/
 transcripts/<stem>/  transcript.words.json + transcript.txt + title.txt   ← subtitle/title source of truth
 titlekit.py          title-file helpers (default_title / ensure_title_file / load_title) + detect_face_vspan
+pending.py           read-only: what still needs prepare / subtitle / re-burn / final (also --json)
 social_assets/ social_posts/  social_post.py / social_linkedin.py  (separate "social" tooling)
 ```
 

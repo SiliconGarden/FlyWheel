@@ -79,6 +79,13 @@ python3 process_videos.py   # horizontal videos
 
 By default, **existing outputs are skipped** — only new files are processed.
 
+To see what's outstanding first (new clips, plus any where `transcript.txt` or
+`title.txt` changed since the last burn):
+
+```bash
+python3 pending.py          # add --json for machine-readable output
+```
+
 ---
 
 ## Pipeline Steps

@@ -11,6 +11,7 @@
       "Bash(pip3 install:*)",
       "Bash(python3 -m pip install:*)",
       "Bash(python3 -m py_compile:*)",
+      "Bash(python3 pending.py:*)",
       "Bash(python3 prepare_reels.py:*)",
       "Bash(python3 prepare_videos.py:*)",
       "Bash(python3 subtitle_reels.py:*)",
