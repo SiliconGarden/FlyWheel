@@ -65,10 +65,14 @@ Editing transcripts: fix `transcripts/<name>/transcript.txt` (one line per
 subtitle entry — never add/remove lines). `*word*` → yellow emphasis in the
 burn. Re-running the pipeline auto-applies edits before burning.
 
-Titles: `transcripts/<name>/title.txt`, one line, empty = no title. Rendered in
-the turquoise pill above the subtitle for the first 10 s, kept off the face.
-Subtitles are white on a ~75 %-opaque black pill (no karaoke word-highlight).
-Geometry + face-avoidance live in each `srt_to_ass`; text helpers in `titlekit.py`.
+Titles: `transcripts/<name>/title.txt`, one line, empty = no title. Turquoise
+League Spartan pill directly above the subtitle, visible from frame 0 (no
+fade-in → it's the cover), fades out at 10 s, nudged off the eyes/mouth. First
+~0.3 s stay subtitle-free. Subtitles are **Karla** body text (≈70 % of the title
+size, no pill, white + outline + shadow, no karaoke). Whole block sits at ~92 %
+height. Fonts: League Spartan from the system, Karla from `assets/Karla/` via
+ffmpeg `fontsdir` (`titlekit.ass_fontsdir()`). Geometry + face-avoidance live in
+each `srt_to_ass`; title-file + font helpers in `titlekit.py`.
 
 ## Folder map
 
@@ -80,7 +84,8 @@ reel_d_subtitles/<stem>/  video_d_subtitles/<stem>/   .srt/.ass/.words.json + bu
 reel_e_final/     video_e_final/       clip + outro
 reel_a_thumbnails/ video_a_thumbnails/ staging/ + approved/
 transcripts/<stem>/  transcript.words.json + transcript.txt + title.txt   ← subtitle/title source of truth
-titlekit.py          title-file helpers (default_title / ensure_title_file / load_title) + detect_face_vspan
+assets/Karla/        bundled Karla font family (subtitle body); passed to ffmpeg via fontsdir
+titlekit.py          title-file helpers (default_title / ensure_title_file / load_title) + detect_face_vspan + ass_fontsdir
 pending.py           read-only: what still needs prepare / subtitle / re-burn / final (also --json)
 social_assets/ social_posts/  social_post.py / social_linkedin.py  (separate "social" tooling)
 ```

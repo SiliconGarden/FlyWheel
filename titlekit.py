@@ -33,6 +33,16 @@ _STAMP_RE = re.compile(
 )
 _TRAILING_TAKE_RE = re.compile(r"\s*#\d+\s*$")
 
+_KARLA_DIR = Path(__file__).resolve().parent / "assets" / "Karla" / "static"
+
+
+def ass_fontsdir() -> Optional[str]:
+    """Escaped `fontsdir=` value for ffmpeg's `ass` filter so libass finds the
+    bundled Karla faces without a system install. None if the folder is absent."""
+    if not _KARLA_DIR.is_dir():
+        return None
+    return str(_KARLA_DIR).replace("\\", "/").replace(":", r"\:")
+
 
 def default_title(stem: str) -> str:
     """Best-effort readable title from a source file's stem."""

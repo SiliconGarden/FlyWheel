@@ -44,19 +44,24 @@ except ImportError:
 # ── Config ────────────────────────────────────────────────────────────────────
 
 SUPPORTED_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
-FONT_NAME = "League Spartan"
+
+TITLE_FONT = "League Spartan"   # title pill — matches the social-post hooks
+BODY_FONT  = "Karla"            # subtitles — set as body text (see assets/Karla)
 
 # ASS colors (ABGR format: &HAABBGGRR — AA: 00 = opaque, FF = transparent)
-TURQUOISE   = "&H1EE6E15C"   # #5CE1E6 — title pill, ~88 % opaque (matches social posts)
-SUBTITLE_BG = "&H40000000"   # black, ~75 % opaque — subtitle pill
-WHITE       = "&H00FFFFFF"   # subtitle / title text
-YELLOW      = "&H005BF6FF"   # #fff65b — *asterisk* emphasis
-NONE        = "&H00000000"
+TURQUOISE = "&H1EE6E15C"   # #5CE1E6 — title pill, ~88 % opaque (matches social posts)
+WHITE     = "&H00FFFFFF"   # subtitle / title text
+YELLOW    = "&H005BF6FF"   # #fff65b — *asterisk* emphasis
+BLACK     = "&H00000000"   # subtitle outline
+SHADOW    = "&H78000000"   # subtitle drop shadow (~53 % opaque black)
+NONE      = "&H00000000"
 
 # Title layer
-TITLE_MAX_SECONDS = 10.0
-TITLE_FADE_IN_MS  = 300
-TITLE_FADE_OUT_MS = 400
+TITLE_MAX_SECONDS   = 10.0
+TITLE_FADE_OUT_MS   = 400
+COVER_HOLD_SECONDS  = 0.30   # keep the very start subtitle-free → cover = title only
+BODY_SCALE          = 0.70   # subtitle size relative to the title
+SAFE_BOTTOM_FRAC    = 0.92   # both layers sit this low (block moved down for the cover)
 
 
 def _join_with_breaks(parts: list[str], break_after: set[int]) -> str:
@@ -199,12 +204,15 @@ def parse_markup(text: str) -> list[tuple[str, bool]]:
     return tokens
 
 
-_MEASURING_FONT_CACHE: dict[int, Optional["ImageFont.FreeTypeFont"]] = {}
+_MEASURING_FONT_CACHE: dict[tuple, Optional["ImageFont.FreeTypeFont"]] = {}
+
+_ASSETS_KARLA = Path(__file__).resolve().parent / "assets" / "Karla" / "static"
 
 
-def _find_font_file(name_fragment: str = "Spartan") -> Optional[Path]:
-    """Locate the League Spartan font file on disk for text-width measurement."""
+def _find_font_file(name_fragment: str) -> Optional[Path]:
+    """Locate a font file on disk for text-width measurement."""
     search_dirs = [
+        _ASSETS_KARLA,
         Path.home() / "Library/Fonts",
         Path("/Library/Fonts"),
         Path("/System/Library/Fonts"),
@@ -220,27 +228,32 @@ def _find_font_file(name_fragment: str = "Spartan") -> Optional[Path]:
     return None
 
 
-def _load_measuring_font(font_size: int) -> Optional["ImageFont.FreeTypeFont"]:
+def _load_measuring_font(font_size: int, fragment: str,
+                         bold: bool = False) -> Optional["ImageFont.FreeTypeFont"]:
     """
-    Load a PIL font matching the burned-in subtitle style, used only to
-    predict how many lines a chunk of text will wrap to (so the pill
-    background can be sized to 1 or 2 lines instead of always 2).
-    Returns None if Pillow or the font file isn't available — callers must
-    fall back to the fixed 2-line box in that case.
+    Load a PIL font matching a burned-in style, used only to predict how many
+    lines a chunk of text will wrap to. Returns None if Pillow or the font file
+    isn't available — callers fall back to a fixed 2-line assumption.
     """
-    if ImageFont is None or font_size in _MEASURING_FONT_CACHE:
-        return _MEASURING_FONT_CACHE.get(font_size)
+    key = (font_size, fragment, bold)
+    if ImageFont is None or key in _MEASURING_FONT_CACHE:
+        return _MEASURING_FONT_CACHE.get(key)
     font = None
-    font_path = _find_font_file()
+    font_path = _find_font_file(fragment)
     if font_path:
         try:
             font = ImageFont.truetype(str(font_path), font_size)
-            if "Bold" in (n.decode() if isinstance(n, bytes) else n
-                          for n in font.get_variation_names()):
-                font.set_variation_by_name("Bold")
+            if bold:
+                try:
+                    names = [n.decode() if isinstance(n, bytes) else n
+                             for n in font.get_variation_names()]
+                    if "Bold" in names:
+                        font.set_variation_by_name("Bold")
+                except Exception:
+                    pass
         except Exception:
             font = None
-    _MEASURING_FONT_CACHE[font_size] = font
+    _MEASURING_FONT_CACHE[key] = font
     return font
 
 
@@ -290,29 +303,35 @@ def srt_to_ass(srt_path: Path, video_width: int, video_height: int,
                title: str = "", title_seconds: float = TITLE_MAX_SECONDS,
                face_vspan: "tuple[float, float] | None" = None) -> Path:
     """
-    Convert SRT → ASS. Two stacked, bottom-anchored, centre-aligned layers:
+    Convert SRT → ASS. Two bottom-anchored, centre-aligned layers:
 
-      • Subtitle — white text on a ~75 %-opaque black rounded pill, one event per
-        line, shown for that line's full duration. (No karaoke word highlight.)
-      • Title    — optional single line in the turquoise pill (same look the
-        subtitles used to have), sitting directly above the subtitle block,
-        shown for the first `title_seconds` seconds with a fade in/out. Nudged
-        vertically to avoid `face_vspan` (normalised (y0, y1)) when given.
+      • Subtitle — Karla body text, no pill, white with a black outline + drop
+        shadow. One event per line, for that line's full duration.
+      • Title    — optional line in the turquoise League Spartan pill, directly
+        above the subtitle. Shown from the *first frame* (cover, no fade-in)
+        until `title_seconds`, then fades out. Nudged vertically to avoid
+        `face_vspan` (normalised (y0, y1)).
 
-    Both stay inside the title-safe area (10 % margin from each edge).
+    The block sits low (SAFE_BOTTOM_FRAC) so the title reads well on the cover;
+    the first ~COVER_HOLD_SECONDS stay subtitle-free.
     """
     ass_path = srt_path.with_suffix(".ass")
 
-    # Layout — scales with video width, minimum 60px so text is always legible
-    font_size = max(60, min(88, int(video_width * 0.065)))
-    pad_y     = int(font_size * 0.45)
-    line_h    = int(font_size * 1.35)
-    box_w     = int(video_width * 0.84)
-    corner_r  = int(font_size * 0.40)
+    # Title pill — scales with width, min 60px
+    title_size = max(60, min(88, int(video_width * 0.065)))
+    t_pad_y    = int(title_size * 0.45)
+    t_line_h   = int(title_size * 1.35)
+    t_corner   = int(title_size * 0.40)
+    box_w      = int(video_width * 0.84)
 
-    safe_bottom       = int(video_height * 0.90)
-    safe_top          = int(video_height * 0.10)
-    safe_top_of_third = int(video_height * 0.67)
+    # Subtitle body — smaller, Karla
+    body_size   = max(40, int(title_size * BODY_SCALE))
+    body_line_h = int(body_size * 1.32)
+    b_outline   = max(3, int(body_size * 0.13))
+    b_shadow    = max(2, int(body_size * 0.07))
+
+    safe_bottom = int(video_height * SAFE_BOTTOM_FRAC)
+    safe_top    = int(video_height * 0.10)
 
     cx = video_width // 2
     x1 = max(0, cx - box_w // 2)
@@ -320,23 +339,19 @@ def srt_to_ass(srt_path: Path, video_width: int, video_height: int,
     box_w = x2 - x1
     cx = x1 + box_w // 2
 
-    # Internal horizontal padding keeps text away from the pill edges
-    pad_x    = int(font_size * 0.65)
+    pad_x    = int(title_size * 0.65)
     margin_l = x1 + pad_x
     margin_r = (video_width - x2) + pad_x
     max_text_width = box_w - 2 * pad_x
 
-    measuring_font = _load_measuring_font(font_size)
+    title_font = _load_measuring_font(title_size, "Spartan", bold=True)
+    body_font  = _load_measuring_font(body_size, "Karla-Regular")
 
-    def wrap_info(words: list[str], cap: "int | None" = None) -> "tuple[int, set[int]]":
-        """(line_count, break-after-word-index set) predicted for `words`.
-
-        `cap` limits the line count — used for the title (≤ 2 lines); the
-        subtitle passes None so its pill grows to the real wrapped height.
-        """
-        if measuring_font is None or not words:
+    def wrap_info(words, font, cap=None) -> "tuple[int, set[int]]":
+        """(line_count, break-after-word-index set) predicted for `words`."""
+        if font is None or not words:
             return (2 if cap is None else min(2, cap), set())
-        groups = wrap_words(words, measuring_font, max_text_width)
+        groups = wrap_words(words, font, max_text_width)
         if cap is not None:
             groups = groups[:cap]
         breaks: set[int] = set()
@@ -346,35 +361,31 @@ def srt_to_ass(srt_path: Path, video_width: int, video_height: int,
             breaks.add(wi - 1)
         return (max(1, len(groups)), breaks)
 
-    def box_geometry(n_lines: int):
-        """Bottom-anchored subtitle box for a chunk that renders as n_lines lines."""
-        box_h = n_lines * line_h + 2 * pad_y
-        y2 = safe_bottom - int(font_size * 0.20)
-        y1 = y2 - box_h
-        if y1 < safe_top_of_third:
-            y1 = safe_top_of_third
-            y2 = y1 + box_h
-        return y1, box_h, y1 + box_h // 2
-
     def markup_parts(text: str) -> "tuple[list[str], list[str]]":
         tokens = parse_markup(text)               # [(word, is_emph), ...]
         words  = [w for w, _ in tokens]
         parts  = [f"{{\\c{YELLOW if emph else WHITE}}}{w}" for w, emph in tokens]
         return words, parts
 
-    # Parse SRT; remember the tallest subtitle chunk so the title anchors just
-    # above it (a clip whose lines are all 1-line gets a snug title).
+    # Parse SRT; keep the tallest body chunk so the title anchors just above it.
     subtitles = []
-    max_sub_lines = 1
+    max_body_lines = 1
     for block in srt_path.read_text(encoding="utf-8").strip().split("\n\n"):
         lines = block.strip().split("\n")
         if len(lines) < 3:
             continue
         start, end = (parse_srt_time(t) for t in lines[1].split(" --> "))
         text = " ".join(lines[2:])
+        if start < COVER_HOLD_SECONDS < end:      # keep the cover subtitle-free
+            start = COVER_HOLD_SECONDS
+        if start >= end:
+            continue
         subtitles.append((start, end, text))
         words = [w for w, _ in parse_markup(text)]
-        max_sub_lines = max(max_sub_lines, wrap_info(words)[0])
+        max_body_lines = max(max_body_lines, wrap_info(words, body_font)[0])
+
+    body_bottom  = safe_bottom - int(body_size * 0.25)   # breathing room at the edge
+    max_body_top = body_bottom - max_body_lines * body_line_h
 
     with open(ass_path, "w", encoding="utf-8") as f:
         f.write(
@@ -389,70 +400,64 @@ def srt_to_ass(srt_path: Path, video_width: int, video_height: int,
             "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, "
             "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
             "Alignment, MarginL, MarginR, MarginV, Encoding\n"
-            f"Style: Text,{FONT_NAME},{font_size},{WHITE},{NONE},{NONE},{NONE},"
+            f"Style: Body,{BODY_FONT},{body_size},{WHITE},{NONE},{BLACK},{SHADOW},"
+            f"0,0,0,0,100,100,0,0,1,{b_outline},{b_shadow},5,0,0,0,1\n"
+            f"Style: TitleText,{TITLE_FONT},{title_size},{WHITE},{NONE},{NONE},{NONE},"
             f"-1,0,0,0,100,100,0,0,1,0,0,5,0,0,0,1\n"
-            f"Style: SubBG,{FONT_NAME},{font_size},{SUBTITLE_BG},{NONE},{NONE},{NONE},"
-            f"0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1\n"
-            f"Style: TitleBG,{FONT_NAME},{font_size},{TURQUOISE},{NONE},{NONE},{NONE},"
+            f"Style: TitleBG,{TITLE_FONT},{title_size},{TURQUOISE},{NONE},{NONE},{NONE},"
             f"0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1\n\n"
             "[Events]\n"
             "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
         )
 
-        # ── Title (optional) — fixed position above the max subtitle extent ──
+        # ── Title (optional) — fixed position above the tallest body chunk ──
         title = title.strip()
         if title and title_seconds > 0:
             t_words, t_parts = markup_parts(title)
-            n_tlines, t_breaks = wrap_info(t_words, cap=2)
-            t_box_h = n_tlines * line_h + 2 * pad_y
+            n_tlines, t_breaks = wrap_info(t_words, title_font, cap=2)
+            t_box_h = n_tlines * t_line_h + 2 * t_pad_y
 
-            sub_top = box_geometry(max_sub_lines)[0]   # top of the tallest subtitle
-            gap     = int(font_size * 0.30)
-            ty2 = sub_top - gap
+            gap = int(title_size * 0.35)
+            ty2 = max_body_top - gap
             ty1 = ty2 - t_box_h
 
             if face_vspan:
                 fy0   = face_vspan[0] * video_height
                 fy1   = face_vspan[1] * video_height
                 fcrit = fy0 + 0.55 * (fy1 - fy0)   # eyes/mouth — chin may be grazed
-                m     = int(font_size * 0.30)
+                m     = int(title_size * 0.30)
                 if ty1 < fcrit + m and ty2 > fy0 - m:         # covers the upper face
                     below_y1 = int(fy1 + m)
                     above_y2 = int(fy0 - m)
-                    if below_y1 + t_box_h <= sub_top - gap:    # room below the face
+                    if below_y1 + t_box_h <= max_body_top - gap:   # room below the face
                         ty1, ty2 = below_y1, below_y1 + t_box_h
-                    elif above_y2 - t_box_h >= safe_top:       # room above the face
+                    elif above_y2 - t_box_h >= safe_top:           # room above the face
                         ty1, ty2 = above_y2 - t_box_h, above_y2
                     else:
                         ty1, ty2 = safe_top, safe_top + t_box_h
 
             ty1 = max(ty1, safe_top)
             t_cy = ty1 + t_box_h // 2
-            t_shape = ass_rounded_rect(box_w, t_box_h, corner_r)
-            fade = f"\\fad({TITLE_FADE_IN_MS},{TITLE_FADE_OUT_MS})"
+            t_shape = ass_rounded_rect(box_w, t_box_h, t_corner)
+            fade = f"\\fad(0,{TITLE_FADE_OUT_MS})"          # no fade-in → visible on frame 0
             s0, s1 = format_ass_time(0.0), format_ass_time(title_seconds)
             f.write(
                 f"Dialogue: 0,{s0},{s1},TitleBG,,0,0,0,,"
                 f"{{\\an7\\pos({x1},{ty1})\\p1{fade}}}{t_shape}{{\\p0}}\n"
             )
             f.write(
-                f"Dialogue: 1,{s0},{s1},Text,,{margin_l},{margin_r},0,,"
+                f"Dialogue: 1,{s0},{s1},TitleText,,{margin_l},{margin_r},0,,"
                 f"{{\\an5\\pos({cx},{t_cy}){fade}}}{_join_with_breaks(t_parts, t_breaks)}\n"
             )
 
-        # ── Subtitles ──────────────────────────────────────────────────────
+        # ── Subtitles (body text, no pill) ─────────────────────────────────
         for start, end, text in subtitles:
             words, parts = markup_parts(text)
-            n_lines, breaks = wrap_info(words)
-            y1, box_h, cy = box_geometry(n_lines)
-            bg_shape = ass_rounded_rect(box_w, box_h, corner_r)
+            n_lines, breaks = wrap_info(words, body_font)
+            cy = body_bottom - (n_lines * body_line_h) // 2
             s_bg, e_bg = format_ass_time(start), format_ass_time(end)
             f.write(
-                f"Dialogue: 0,{s_bg},{e_bg},SubBG,,0,0,0,,"
-                f"{{\\an7\\pos({x1},{y1})\\p1}}{bg_shape}{{\\p0}}\n"
-            )
-            f.write(
-                f"Dialogue: 1,{s_bg},{e_bg},Text,,{margin_l},{margin_r},0,,"
+                f"Dialogue: 0,{s_bg},{e_bg},Body,,{margin_l},{margin_r},0,,"
                 f"{{\\an5\\pos({cx},{cy})}}{_join_with_breaks(parts, breaks)}\n"
             )
 
@@ -651,10 +656,14 @@ def burn_subtitles(video_path: Path, srt_path: Path, output_dir: Path,
     shutil.copy2(ass_path, tmp_ass)
     try:
         ass_str = str(tmp_ass).replace("\\", "/")
+        vf = f"ass=f={ass_str}"
+        fontsdir = titlekit.ass_fontsdir()
+        if fontsdir:
+            vf += f":fontsdir={fontsdir}"
         cmd = [
             "ffmpeg", "-y",
             "-i", str(video_path),
-            "-vf", f"ass=f={ass_str}",
+            "-vf", vf,
             "-c:a", "copy",
             str(out_path),
         ]

@@ -13,8 +13,10 @@ Supports two formats: **vertical reels** (9:16, 720 px wide) and **horizontal vi
 - **numpy** — `pip install numpy` _(required by `prepare_videos.py`)_
 - [opencv-python](https://pypi.org/project/opencv-python/) — `pip install opencv-python` _(face detection for reel crop + thumbnail scoring; falls back to centre crop / unscored if missing)_
 - **mediapipe** — `pip install mediapipe` _(optional: face-expression scoring for thumbnails)_
-- **Pillow** — `pip install pillow` _(optional: 1- vs 2-line pill sizing for reel subtitles)_
-- Font: **League Spartan** installed on the system
+- **Pillow** — `pip install pillow` _(optional: line-count prediction for reel subtitle/title wrapping)_
+- Fonts: **League Spartan** installed on the system (title); **Karla** for the
+  subtitle body — bundled in `assets/Karla/` and passed to ffmpeg via
+  `fontsdir`, so no install is needed
 
 Pinned versions are in `requirements.txt`. The pipeline currently runs under the
 macOS **system `python3`** (3.9) with its user site-packages. The `.venv/` in
@@ -164,9 +166,11 @@ This is a *really* important point.
 
 ## Titles
 
-Each clip can show a **title** in the same turquoise pill the subtitles use,
-sitting directly above the subtitle for the first **10 seconds**, then fading
-out. The title is kept clear of the speaker's face and inside the safe zone.
+Each clip can show a **title** in a turquoise League Spartan pill, sitting
+directly above the subtitle. It is visible from the **first frame** (so it
+works as the cover / thumbnail — the first ~0.3 s stay subtitle-free) through
+**10 seconds**, then fades out. The whole block sits low in the frame and the
+title is nudged clear of the speaker's face.
 
 Titles live next to the transcript:
 
@@ -204,18 +208,20 @@ All three options are consumed by the **prepare** step. Run it (or the full
 
 ## Subtitle & Title Style
 
-| | Subtitle | Title (first 10 s) |
+| | Subtitle (body) | Title (first 10 s) |
 |---|---|---|
-| Font | League Spartan | League Spartan |
-| Background | **black rounded pill, ~75 % opaque** | **turquoise rounded pill** |
+| Font | **Karla** regular | League Spartan bold |
+| Background | none — white text, black outline + drop shadow | turquoise rounded pill |
+| Size | ~70 % of the title | reels ≈ 60 px · videos ≈ 35 px |
 | Text | white (`*emphasis*` → yellow) | white (`*emphasis*` → yellow) |
 | Karaoke word-highlight | no | no |
-| Position | bottom of the safe zone | directly above the subtitle |
-| Lines | reels 2 · videos 1 | reels ≤ 2 · videos 1 |
+| Position | low, ~92 % of frame height | directly above the subtitle |
+| Lines | reels grow to fit · videos 1 | reels ≤ 2 · videos 1 |
 
-Both layers stay inside the title-safe area; the title is nudged vertically to
-avoid the speaker's face (Haar-cascade detection, sampled at burn time — falls
-back to a safe-zone clamp if opencv is missing or no face is found).
+The title shows from the first frame with **no fade-in** (so the cover frame
+carries it) and fades out at 10 s. It is nudged vertically to avoid the
+speaker's eyes/mouth (Haar-cascade detection, sampled at burn time — falls back
+to a safe-zone clamp if opencv is missing or no face is found).
 
 ---
 
