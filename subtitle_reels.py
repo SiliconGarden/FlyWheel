@@ -328,11 +328,17 @@ def srt_to_ass(srt_path: Path, video_width: int, video_height: int,
 
     measuring_font = _load_measuring_font(font_size)
 
-    def wrap_info(words: list[str], max_lines: int) -> "tuple[int, set[int]]":
-        """(line_count, break-after-word-index set) predicted for `words`."""
+    def wrap_info(words: list[str], cap: "int | None" = None) -> "tuple[int, set[int]]":
+        """(line_count, break-after-word-index set) predicted for `words`.
+
+        `cap` limits the line count — used for the title (≤ 2 lines); the
+        subtitle passes None so its pill grows to the real wrapped height.
+        """
         if measuring_font is None or not words:
-            return (min(2, max_lines), set())
-        groups = wrap_words(words, measuring_font, max_text_width)[:max_lines]
+            return (2 if cap is None else min(2, cap), set())
+        groups = wrap_words(words, measuring_font, max_text_width)
+        if cap is not None:
+            groups = groups[:cap]
         breaks: set[int] = set()
         wi = 0
         for g in groups[:-1]:
@@ -368,7 +374,7 @@ def srt_to_ass(srt_path: Path, video_width: int, video_height: int,
         text = " ".join(lines[2:])
         subtitles.append((start, end, text))
         words = [w for w, _ in parse_markup(text)]
-        max_sub_lines = max(max_sub_lines, wrap_info(words, 2)[0])
+        max_sub_lines = max(max_sub_lines, wrap_info(words)[0])
 
     with open(ass_path, "w", encoding="utf-8") as f:
         f.write(
@@ -397,7 +403,7 @@ def srt_to_ass(srt_path: Path, video_width: int, video_height: int,
         title = title.strip()
         if title and title_seconds > 0:
             t_words, t_parts = markup_parts(title)
-            n_tlines, t_breaks = wrap_info(t_words, max_lines=2)
+            n_tlines, t_breaks = wrap_info(t_words, cap=2)
             t_box_h = n_tlines * line_h + 2 * pad_y
 
             sub_top = box_geometry(max_sub_lines)[0]   # top of the tallest subtitle
@@ -437,7 +443,7 @@ def srt_to_ass(srt_path: Path, video_width: int, video_height: int,
         # ── Subtitles ──────────────────────────────────────────────────────
         for start, end, text in subtitles:
             words, parts = markup_parts(text)
-            n_lines, breaks = wrap_info(words, max_lines=2)
+            n_lines, breaks = wrap_info(words)
             y1, box_h, cy = box_geometry(n_lines)
             bg_shape = ass_rounded_rect(box_w, box_h, corner_r)
             s_bg, e_bg = format_ass_time(start), format_ass_time(end)
