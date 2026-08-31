@@ -66,13 +66,17 @@ subtitle entry — never add/remove lines). `*word*` → yellow emphasis in the
 burn. Re-running the pipeline auto-applies edits before burning.
 
 Titles: `transcripts/<name>/title.txt`, one line, empty = no title. Turquoise
-League Spartan pill directly above the subtitle, visible from frame 0 (no
-fade-in → it's the cover), fades out at 10 s, nudged off the eyes/mouth. First
-~0.3 s stay subtitle-free. Subtitles are **Karla** body text (≈70 % of the title
-size, no pill, white + outline + shadow, no karaoke). Whole block sits at ~92 %
-height. Fonts: League Spartan from the system, Karla from `assets/Karla/` via
-ffmpeg `fontsdir` (`titlekit.ass_fontsdir()`). Geometry + face-avoidance live in
-each `srt_to_ass`; title-file + font helpers in `titlekit.py`.
+pill in **League Spartan ExtraBold** (weight-800 instance in
+`assets/LeagueSpartan/`, family name `"League Spartan ExtraBold"`, tight leading
++ `-0.035em` tracking — mirrors the homepage H1), directly above the subtitle,
+visible from frame 0 (no fade-in → it's the cover), fades out at 10 s, nudged
+off the eyes/mouth. First ~0.3 s stay subtitle-free. Subtitles are **Karla**
+body (≈82 % of the title size, no pill, thin outline + soft blurred shadow, no
+karaoke). Whole block at ~92 % height. Multi-line titles are emitted one
+`\pos`'d event per line for real line-height control. Fonts live in `assets/`,
+passed to ffmpeg via `fontsdir` (`titlekit.ass_fontsdir()`) **and** installed to
+`~/Library/Fonts` on this machine (libass here resolves via fontconfig).
+Geometry + face-avoidance in each `srt_to_ass`; helpers in `titlekit.py`.
 
 ## Folder map
 
@@ -84,7 +88,7 @@ reel_d_subtitles/<stem>/  video_d_subtitles/<stem>/   .srt/.ass/.words.json + bu
 reel_e_final/     video_e_final/       clip + outro
 reel_a_thumbnails/ video_a_thumbnails/ staging/ + approved/
 transcripts/<stem>/  transcript.words.json + transcript.txt + title.txt   ← subtitle/title source of truth
-assets/Karla/        bundled Karla font family (subtitle body); passed to ffmpeg via fontsdir
+assets/Karla/ assets/LeagueSpartan/   bundled fonts (subtitle body / title 800); via fontsdir + ~/Library/Fonts
 titlekit.py          title-file helpers (default_title / ensure_title_file / load_title) + detect_face_vspan + ass_fontsdir
 pending.py           read-only: what still needs prepare / subtitle / re-burn / final (also --json)
 social_assets/ social_posts/  social_post.py / social_linkedin.py  (separate "social" tooling)

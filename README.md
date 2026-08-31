@@ -14,9 +14,10 @@ Supports two formats: **vertical reels** (9:16, 720 px wide) and **horizontal vi
 - [opencv-python](https://pypi.org/project/opencv-python/) — `pip install opencv-python` _(face detection for reel crop + thumbnail scoring; falls back to centre crop / unscored if missing)_
 - **mediapipe** — `pip install mediapipe` _(optional: face-expression scoring for thumbnails)_
 - **Pillow** — `pip install pillow` _(optional: line-count prediction for reel subtitle/title wrapping)_
-- Fonts: **League Spartan** installed on the system (title); **Karla** for the
-  subtitle body — bundled in `assets/Karla/` and passed to ffmpeg via
-  `fontsdir`, so no install is needed
+- Fonts, all bundled in `assets/` and passed to ffmpeg via `fontsdir` (also
+  installed to `~/Library/Fonts` on this machine): **League Spartan ExtraBold**
+  (title — a weight-800 instance of the variable font, `assets/LeagueSpartan/`)
+  and **Karla** (subtitle body, `assets/Karla/`)
 
 Pinned versions are in `requirements.txt`. The pipeline currently runs under the
 macOS **system `python3`** (3.9) with its user site-packages. The `.venv/` in
@@ -210,9 +211,9 @@ All three options are consumed by the **prepare** step. Run it (or the full
 
 | | Subtitle (body) | Title (first 10 s) |
 |---|---|---|
-| Font | **Karla** regular | League Spartan bold |
-| Background | none — white text, black outline + drop shadow | turquoise rounded pill |
-| Size | ~70 % of the title | reels ≈ 60 px · videos ≈ 35 px |
+| Font | **Karla** regular | **League Spartan ExtraBold** (weight 800, tight leading + `-0.035em` tracking — matches the homepage H1) |
+| Background | none — white text, thin outline + soft blurred shadow | turquoise rounded pill |
+| Size | ~82 % of the title | reels ≈ 60 px · videos ≈ 35 px |
 | Text | white (`*emphasis*` → yellow) | white (`*emphasis*` → yellow) |
 | Karaoke word-highlight | no | no |
 | Position | low, ~92 % of frame height | directly above the subtitle |

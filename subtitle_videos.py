@@ -39,22 +39,27 @@ import titlekit
 
 SUPPORTED_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
 
-TITLE_FONT = "League Spartan"   # title pill — matches the social-post hooks
-BODY_FONT  = "Karla"            # subtitles — set as body text (see assets/Karla)
+TITLE_FONT      = "League Spartan ExtraBold"  # weight 800 instance, bundled in assets/
+TITLE_FONT_MEASURE = "LeagueSpartan-ExtraBold"
+BODY_FONT       = "Karla"                     # subtitle body text (see assets/Karla)
+
+# Title type — mirrors the homepage H1 (League Spartan 800, tight)
+TITLE_LINE_HEIGHT = 0.95
+TITLE_TRACKING    = -0.035  # homepage letter-spacing, in em
 
 # ASS colors (ABGR format: &HAABBGGRR — AA: 00 = opaque, FF = transparent)
 TURQUOISE = "&H1EE6E15C"   # #5CE1E6 — title pill, ~88 % opaque (matches social posts)
 WHITE     = "&H00FFFFFF"   # subtitle / title text
 YELLOW    = "&H005BF6FF"   # #fff65b — *asterisk* emphasis
 BLACK     = "&H00000000"   # subtitle outline
-SHADOW    = "&H78000000"   # subtitle drop shadow (~53 % opaque black)
+SHADOW    = "&HC0000000"   # subtitle drop shadow — soft + transparent (~25 % opaque)
 NONE      = "&H00000000"
 
 # Title layer
 TITLE_MAX_SECONDS   = 10.0
 TITLE_FADE_OUT_MS   = 400
 COVER_HOLD_SECONDS  = 0.30   # keep the very start subtitle-free → cover = title only
-BODY_SCALE          = 0.72   # subtitle size relative to the title
+BODY_SCALE          = 0.82   # subtitle size relative to the title (bumped for legibility)
 SAFE_BOTTOM_FRAC    = 0.92   # both layers sit this low (block moved down for the cover)
 
 
@@ -223,18 +228,20 @@ def srt_to_ass(srt_path: Path, video_width: int, video_height: int,
     """
     ass_path = srt_path.with_suffix(".ass")
 
-    # Title pill
+    # Title pill — League Spartan 800, tight leading + negative tracking (homepage H1)
     title_size = max(28, min(44, int(video_width * 0.033)))
-    t_pad_y    = int(title_size * 0.45)
-    t_line_h   = int(title_size * 1.35)
+    t_pad_y    = int(title_size * 0.34)
+    t_lh       = int(title_size * TITLE_LINE_HEIGHT)
     t_corner   = int(title_size * 0.40)
+    t_spacing  = round(TITLE_TRACKING * title_size)
     box_w      = int(video_width * 0.90)
 
-    # Subtitle body — smaller, Karla, no pill
+    # Subtitle body — Karla, no pill, thin outline + soft wide shadow
     body_size   = max(24, int(title_size * BODY_SCALE))
-    body_line_h = int(body_size * 1.32)
-    b_outline   = max(3, int(body_size * 0.13))
-    b_shadow    = max(2, int(body_size * 0.07))
+    body_line_h = int(body_size * 1.30)
+    b_outline   = max(2, int(body_size * 0.10))
+    b_shadow    = max(4, int(body_size * 0.16))
+    b_blur      = max(2, int(body_size * 0.08))
 
     safe_bottom = int(video_height * SAFE_BOTTOM_FRAC)
     safe_top    = int(video_height * 0.10)
@@ -286,7 +293,7 @@ def srt_to_ass(srt_path: Path, video_width: int, video_height: int,
             f"Style: Body,{BODY_FONT},{body_size},{WHITE},{NONE},{BLACK},{SHADOW},"
             f"0,0,0,0,100,100,0,0,1,{b_outline},{b_shadow},5,0,0,0,1\n"
             f"Style: TitleText,{TITLE_FONT},{title_size},{WHITE},{NONE},{NONE},{NONE},"
-            f"-1,0,0,0,100,100,0,0,1,0,0,5,0,0,0,1\n"
+            f"0,0,0,0,100,100,{t_spacing},0,1,0,0,5,0,0,0,1\n"
             f"Style: TitleBG,{TITLE_FONT},{title_size},{TURQUOISE},{NONE},{NONE},{NONE},"
             f"0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1\n\n"
             "[Events]\n"
@@ -296,10 +303,17 @@ def srt_to_ass(srt_path: Path, video_width: int, video_height: int,
         # ── Title (optional) ───────────────────────────────────────────────
         title = title.strip()
         if title and title_seconds > 0:
-            # rough glyph advance for League Spartan ≈ 0.52·title_size
-            est_w    = len(title) * title_size * 0.52
-            n_tlines = 2 if est_w > max_text_width else 1
-            t_box_h  = n_tlines * t_line_h + 2 * t_pad_y
+            # rough glyph advance for League Spartan 800 ≈ 0.50·title_size
+            words = title.split()
+            est_w = len(title) * title_size * 0.50
+            if est_w > max_text_width and len(words) > 1:
+                h = (len(words) + 1) // 2
+                tlines = [" ".join(words[:h]), " ".join(words[h:])]
+            else:
+                tlines = [title]
+
+            t_box_h = title_size + (len(tlines) - 1) * t_lh + 2 * t_pad_y
+            corner  = min(t_corner, t_box_h // 2 - 2)
             gap = int(title_size * 0.35)
             ty2 = body_top - gap
             ty1 = ty2 - t_box_h
@@ -320,25 +334,27 @@ def srt_to_ass(srt_path: Path, video_width: int, video_height: int,
                         ty1, ty2 = safe_top, safe_top + t_box_h
 
             ty1 = max(ty1, safe_top)
-            t_cy = ty1 + t_box_h // 2
-            t_shape = ass_rounded_rect(box_w, t_box_h, t_corner)
+            t_shape = ass_rounded_rect(box_w, t_box_h, corner)
             fade = f"\\fad(0,{TITLE_FADE_OUT_MS})"          # no fade-in → visible on frame 0
             s0, s1 = format_ass_time(0.0), format_ass_time(title_seconds)
             f.write(
                 f"Dialogue: 0,{s0},{s1},TitleBG,,0,0,0,,"
                 f"{{\\an7\\pos({x1},{ty1})\\p1{fade}}}{t_shape}{{\\p0}}\n"
             )
-            f.write(
-                f"Dialogue: 1,{s0},{s1},TitleText,,{margin_l},{margin_r},0,,"
-                f"{{\\an5\\pos({cx},{t_cy}){fade}}}{' '.join(markup_parts(title))}\n"
-            )
+            line0_cy = ty1 + t_pad_y + int(title_size * 0.52)
+            for i, line in enumerate(tlines):
+                f.write(
+                    f"Dialogue: 1,{s0},{s1},TitleText,,{margin_l},{margin_r},0,,"
+                    f"{{\\an5\\pos({cx},{line0_cy + i * t_lh}){fade}}}"
+                    f"{' '.join(markup_parts(line))}\n"
+                )
 
         # ── Subtitles (body text, no pill) ─────────────────────────────────
         for start, end, text in subtitles:
             s_bg, e_bg = format_ass_time(start), format_ass_time(end)
             f.write(
                 f"Dialogue: 0,{s_bg},{e_bg},Body,,{margin_l},{margin_r},0,,"
-                f"{{\\an5\\pos({cx},{body_cy})}}{' '.join(markup_parts(text))}\n"
+                f"{{\\an5\\pos({cx},{body_cy})\\blur{b_blur}}}{' '.join(markup_parts(text))}\n"
             )
 
     return ass_path
