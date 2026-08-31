@@ -16,9 +16,11 @@ Supports two formats: **vertical reels** (9:16, 720 px wide) and **horizontal vi
 - **Pillow** — `pip install pillow` _(optional: 1- vs 2-line pill sizing for reel subtitles)_
 - Font: **League Spartan** installed on the system
 
-> All Python dependencies are already installed in the project's `.venv/`. If you
-> recreate it, keep it **outside** any cloud-synced folder (OneDrive/Dropbox) —
-> on-demand file hydration makes `import whisper` take many minutes.
+Pinned versions are in `requirements.txt`. The pipeline currently runs under the
+macOS **system `python3`** (3.9) with its user site-packages. The `.venv/` in
+this folder is incomplete and OneDrive-synced — don't use it; rebuild from
+`requirements.txt` **outside** any cloud-synced folder if you need a venv
+(on-demand file hydration otherwise makes `import whisper` take many minutes).
 
 ---
 

@@ -7,14 +7,17 @@ the operator's cheat sheet.
 
 ## Environment
 
-- **Always use `.venv/bin/python`**, never bare `python3` (system Python lacks
-  whisper/mediapipe).
-- `.venv/` currently lives inside this OneDrive folder and its files are
-  "online-only" → `import whisper` can hang for 10+ minutes on first use while
-  OneDrive hydrates ~23k torch files. If a run sits at 0 % CPU during import,
-  that's why. Fix: hydrate the venv (open it in Finder / "Always keep on this
-  device") or rebuild it **outside** OneDrive. Deps: `openai-whisper`, `numpy`,
-  `opencv-python`, `mediapipe`, `pillow`, plus system `ffmpeg`/`ffprobe`.
+- **Run with system `python3`** (`/usr/bin/python3`, currently 3.9.6). Its
+  user site-packages (`~/Library/Python/3.9/lib/python/site-packages`) has the
+  full set: whisper, torch, opencv-python, mediapipe, pillow, numpy.
+  `ffmpeg`/`ffprobe` are on PATH (homebrew).
+- **Ignore `./.venv/`.** It's an incomplete Python 3.13 env (whisper + torch
+  only — no cv2/mediapipe/pillow) living in OneDrive, where "online-only" files
+  make `import whisper` hang for 10+ minutes on first use. Running the pipeline
+  through it silently degrades output (centre-crop instead of face-crop,
+  unscored thumbnails, fixed 2-line subtitle pills). Delete it, or rebuild from
+  `requirements.txt` **outside** OneDrive.
+- `requirements.txt` pins the known-good versions.
 - macOS. `git` yes, `gh` no. Remote: `github.com/SiliconGarden/FlyWheel`.
 
 ## How the pipeline is wired
@@ -45,13 +48,13 @@ transcript is first written; changing it later needs `--forceall`.
 ## Common commands
 
 ```bash
-.venv/bin/python process_reels.py                 # full reel pipeline (skips existing)
-.venv/bin/python process_videos.py                # full horizontal pipeline
-.venv/bin/python process_reels.py --step prepare  # just prepare (→ transcripts to review)
-.venv/bin/python process_videos.py --model large --lang de
-.venv/bin/python process_reels.py --force         # redo outputs, keep edited transcript.txt
-.venv/bin/python process_reels.py --forceall      # redo + refresh transcript.txt (backs it up)
-.venv/bin/python process_reels.py --no-outro
+python3 process_reels.py                 # full reel pipeline (skips existing)
+python3 process_videos.py                # full horizontal pipeline
+python3 process_reels.py --step prepare  # just prepare (→ transcripts to review)
+python3 process_videos.py --model large --lang de
+python3 process_reels.py --force         # redo outputs, keep edited transcript.txt
+python3 process_reels.py --forceall      # redo + refresh transcript.txt (backs it up)
+python3 process_reels.py --no-outro
 ```
 
 Editing transcripts: fix `transcripts/<name>/transcript.txt` (one line per
