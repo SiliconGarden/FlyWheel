@@ -64,8 +64,10 @@ NONE      = "&H00000000"
 # Title layer
 TITLE_MAX_SECONDS   = 10.0
 TITLE_FADE_OUT_MS   = 400
-COVER_HOLD_SECONDS  = 0.30   # keep the very start subtitle-free → cover = title only
-BODY_SCALE          = 0.82   # subtitle size relative to the title (bumped for legibility)
+TITLE_COVER_MS      = 1200   # title holds a low "cover" position this long …
+TITLE_MOVE_MS       = 400    # … then slides up to sit above the subtitle
+COVER_HOLD_SECONDS  = (TITLE_COVER_MS + TITLE_MOVE_MS) / 1000  # subtitles start after
+BODY_SCALE          = 0.70   # subtitle size relative to the title
 SAFE_BOTTOM_FRAC    = 0.92   # both layers sit this low (block moved down for the cover)
 
 
@@ -323,7 +325,7 @@ def srt_to_ass(srt_path: Path, video_width: int, video_height: int,
     ass_path = srt_path.with_suffix(".ass")
 
     # Title pill — League Spartan 800, tight leading + negative tracking (homepage H1)
-    title_size = max(60, min(88, int(video_width * 0.065)))
+    title_size = max(72, min(104, int(video_width * 0.090)))
     t_pad_y    = int(title_size * 0.34)
     t_lh       = int(title_size * TITLE_LINE_HEIGHT)
     t_corner   = int(title_size * 0.40)
@@ -454,19 +456,25 @@ def srt_to_ass(srt_path: Path, video_width: int, video_height: int,
                     else:
                         ty1, ty2 = safe_top, safe_top + t_box_h
 
-            ty1 = max(ty1, safe_top)
+            ty1 = max(ty1, safe_top)                           # running position (above body)
+            # cover position — low, near the safe bottom (no subtitle competing yet)
+            cover_ty1 = max(ty1, safe_bottom - t_box_h - int(title_size * 0.15))
             t_shape = ass_rounded_rect(box_w, t_box_h, corner)
-            fade = f"\\fad(0,{TITLE_FADE_OUT_MS})"          # no fade-in → visible on frame 0
+            fade  = f"\\fad(0,{TITLE_FADE_OUT_MS})"            # no fade-in → visible on frame 0
+            t1, t2 = TITLE_COVER_MS, TITLE_COVER_MS + TITLE_MOVE_MS
             s0, s1 = format_ass_time(0.0), format_ass_time(title_seconds)
             f.write(
                 f"Dialogue: 0,{s0},{s1},TitleBG,,0,0,0,,"
-                f"{{\\an7\\pos({x1},{ty1})\\p1{fade}}}{t_shape}{{\\p0}}\n"
+                f"{{\\an7\\move({x1},{cover_ty1},{x1},{ty1},{t1},{t2})\\p1{fade}}}"
+                f"{t_shape}{{\\p0}}\n"
             )
-            line0_cy = ty1 + t_pad_y + int(title_size * 0.52)
+            base_cy = t_pad_y + int(title_size * 0.52)
             for i, line in enumerate(tlines):
+                dy = base_cy + i * t_lh
                 f.write(
                     f"Dialogue: 1,{s0},{s1},TitleText,,{margin_l},{margin_r},0,,"
-                    f"{{\\an5\\pos({cx},{line0_cy + i * t_lh}){fade}}}{' '.join(line)}\n"
+                    f"{{\\an5\\move({cx},{cover_ty1 + dy},{cx},{ty1 + dy},{t1},{t2})"
+                    f"{fade}}}{' '.join(line)}\n"
                 )
 
         # ── Subtitles (body text, no pill) ─────────────────────────────────
