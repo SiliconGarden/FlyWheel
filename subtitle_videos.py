@@ -5,13 +5,18 @@ Uses OpenAI Whisper for transcription and ffmpeg for burning subtitles.
 
 Workflow:
     1. python subtitle_videos.py --step transcribe   # → .srt  .words.json  .txt
-    2.  edit  video_subtitles/<name>.txt             # fix typos, punctuation, etc.
+    2.  edit  transcripts/<name>/transcript.txt       # fix typos, punctuation, etc.
     3. python subtitle_videos.py --step apply        # apply edits back to .srt
     4. python subtitle_videos.py --step burn         # render video
 
     python subtitle_videos.py                        # shortcut: transcribe + burn (skips step 2-3)
     python subtitle_videos.py --model large --lang fr
     python subtitle_videos.py --max-words 5
+
+When a shared transcript (transcripts/<name>/transcript.words.json, written by
+prepare_videos.py) exists, step 1 just reformats it into an SRT — Whisper is not
+re-run, so --model / --lang / --max-words have no effect on the text there.
+An edited transcript.txt newer than the SRT is applied automatically before burn.
 """
 
 import argparse
@@ -572,6 +577,18 @@ def main():
         video_dir = output_dir / video.stem
         video_dir.mkdir(parents=True, exist_ok=True)
 
+        # Evaluate txt-changed state NOW, before any SRT rebuild that would reset its mtime.
+        # When --force is set, build_srt_from_transcript() writes a fresh SRT whose mtime
+        # is always newer than the txt — so the normal mtime check would silently drop edits.
+        shared_txt    = transcripts_dir / video.stem / "transcript.txt"
+        local_txt     = video_dir / txt_name_for(video)
+        existing_srt  = video_dir / srt_name_for(video)
+        txt_has_edits = any(
+            txt.exists() and existing_srt.exists()
+            and txt.stat().st_mtime > existing_srt.stat().st_mtime
+            for txt in [shared_txt, local_txt]
+        ) or (force and any(txt.exists() for txt in [shared_txt, local_txt]))
+
         if args.step == "apply":
             srt = apply_transcript(video, video_dir, transcripts_dir)
 
@@ -591,16 +608,10 @@ def main():
                 sys.exit(1)
 
         if args.step in ("burn", "all"):
-            shared_txt = transcripts_dir / video.stem / "transcript.txt"
-            local_txt  = video_dir / txt_name_for(video)
-            txt_changed = any(
-                txt.exists() and srt.exists() and txt.stat().st_mtime > srt.stat().st_mtime
-                for txt in [shared_txt, local_txt]
-            )
-            if txt_changed:
+            if txt_has_edits:
                 print(f"📝 TXT is newer than SRT — applying edits first...")
                 srt = apply_transcript(video, video_dir, transcripts_dir)
-            burn_subtitles(video, srt, video_dir, force=force or txt_changed)
+            burn_subtitles(video, srt, video_dir, force=force or txt_has_edits)
 
     print(f"\n🎉 Done! Processed {len(videos)} video(s).")
 

@@ -10,8 +10,15 @@ Supports two formats: **vertical reels** (9:16, 720 px wide) and **horizontal vi
 - Python 3.9+
 - [ffmpeg + ffprobe](https://ffmpeg.org/download.html)
 - [openai-whisper](https://github.com/openai/whisper) — `pip install openai-whisper`
-- [opencv-python](https://pypi.org/project/opencv-python/) — `pip install opencv-python` _(face detection for reel crop; falls back to centre crop if missing)_
+- **numpy** — `pip install numpy` _(required by `prepare_videos.py`)_
+- [opencv-python](https://pypi.org/project/opencv-python/) — `pip install opencv-python` _(face detection for reel crop + thumbnail scoring; falls back to centre crop / unscored if missing)_
+- **mediapipe** — `pip install mediapipe` _(optional: face-expression scoring for thumbnails)_
+- **Pillow** — `pip install pillow` _(optional: 1- vs 2-line pill sizing for reel subtitles)_
 - Font: **League Spartan** installed on the system
+
+> All Python dependencies are already installed in the project's `.venv/`. If you
+> recreate it, keep it **outside** any cloud-synced folder (OneDrive/Dropbox) —
+> on-demand file hydration makes `import whisper` take many minutes.
 
 ---
 
@@ -20,24 +27,38 @@ Supports two formats: **vertical reels** (9:16, 720 px wide) and **horizontal vi
 ### Reels (vertical)
 
 ```
-reel_a_originals/   ← drop raw recordings here
-reel_b_outro/       ← drop a single outro clip here
-reel_c_sources/     ← prepared clips (audio-optimised, 720 px wide)
-reel_d_subtitles/   ← subtitled clips + .srt / .txt / .words.json sidecars
-reel_e_final/       ← subtitled clip + outro concatenated
+reel_a_originals/       ← drop raw recordings here
+reel_b_outro/           ← drop a single outro clip here
+reel_c_sources/         ← prepared clips (audio-optimised, 720 px wide)
+reel_d_subtitles/<name>/ ← one folder per clip: <name>.srt / .ass / .words.json + burned <name>.<ext>
+reel_e_final/           ← subtitled clip + outro concatenated
+reel_a_thumbnails/       ← candidate thumbnail frames (staging/ + approved/)
 ```
 
 ### Videos (horizontal)
 
 ```
-video_a_originals/  ← drop raw recordings here
-video_b_outro/      ← drop a single outro clip here
-video_c_sources/    ← prepared clips (audio-optimised, 1280×720)
-video_d_subtitles/  ← subtitled clips + .srt / .txt / .words.json sidecars
-video_e_final/      ← subtitled clip + outro concatenated
+video_a_originals/       ← drop raw recordings here
+video_b_outro/           ← drop a single outro clip here
+video_c_sources/         ← prepared clips (audio-optimised, 720 px tall)
+video_d_subtitles/<name>/ ← one folder per clip: <name>.srt / .ass / .words.json + burned <name>.<ext>
+video_e_final/           ← subtitled clip + outro concatenated
+video_a_thumbnails/       ← candidate thumbnail frames (staging/ + approved/)
 ```
 
+### Shared
+
+```
+transcripts/<name>/     ← transcript.words.json (word timing) + transcript.txt (edit this!)
+```
+
+The `transcripts/` folder is the single source of truth for subtitle text. It is
+written by the **prepare** step and keyed by the clip's file name (stem), so a
+horizontal video and its auto-cropped reel share one transcript.
+
 > **Auto reel crop:** The prepare step also produces a portrait reel version of each horizontal video (720×1280) and saves it to `reel_c_sources/`. Face detection is used to centre the crop on the speaker. Use `--no-reel` to skip this.
+>
+> Because the reel crop shares the horizontal video's transcript, its subtitles use the **video** `--max-words` (8), not the reel default (5).
 
 ---
 
@@ -60,9 +81,13 @@ Each pipeline runs three steps in order:
 
 | Step | Script | What it does |
 |------|--------|--------------|
-| **1 — prepare** | `prepare_reels.py` / `prepare_videos.py` | Audio optimisation + loudness normalisation + scale to target resolution |
-| **2 — subtitles** | `subtitle_reels.py` / `subtitle_videos.py` | Whisper transcription → SRT + burn subtitles into video |
+| **1 — prepare** | `prepare_reels.py` / `prepare_videos.py` | Audio optimisation + loudness normalisation + scale to target resolution · **Whisper transcription → `transcripts/<name>/`** · thumbnail extraction · (videos) portrait reel crop |
+| **2 — subtitles** | `subtitle_reels.py` / `subtitle_videos.py` | Build SRT from the shared transcript (re-applying any edited `transcript.txt`) + burn subtitles into video. Falls back to running Whisper itself only if no shared transcript exists. |
 | **3 — final** | _(built into process script)_ | Concatenate subtitled clip + outro |
+
+> Whisper runs in **step 1**, not step 2. `--model` / `--lang` therefore only
+> affect transcription when passed to the prepare step (the `process_*.py`
+> wrappers forward them for you).
 
 ### Run a single step
 
@@ -76,15 +101,22 @@ python3 process_reels.py --step final       # step 3 only
 
 ## Force Flags
 
-By default all steps skip files that already exist. Use these flags to reprocess:
+By default all steps skip files that already exist.
+
+**Reprocess flags:**
 
 | Flag         | Effect |
 |--------------|--------|
 | _(none)_     | Skip any output that already exists |
-| `--force`    | Reprocess all outputs; **never** overwrites manually edited `.txt` transcript files |
-| `--forceall` | Reprocess all outputs **and** overwrite `.txt` files — a timestamped backup (`name_backup_YYYYMMDD_HHMMSS.txt`) is created first |
+| `--force`    | Reprocess all outputs; **never** overwrites manually edited `transcript.txt` |
+| `--forceall` | Reprocess all outputs **and** refresh `transcript.txt` — a timestamped backup (`transcript_backup_YYYYMMDD_HHMMSS.txt`) is created first |
+
+**Skip flags:**
+
+| Flag         | Effect |
+|--------------|--------|
 | `--no-outro` | Skip the outro step, even when running `--step all` |
-| `--no-reel` | Skip portrait reel crop during the prepare step _(videos only)_ |
+| `--no-reel`  | Skip portrait reel crop during the prepare step _(videos only)_ |
 
 ```bash
 python3 process_reels.py --force          # re-run everything, keep edited transcripts
@@ -97,15 +129,15 @@ python3 process_videos.py --no-reel       # skip reel crop during prepare
 
 ## Editing Transcripts
 
-After the subtitle step, each video gets a plain-text transcript in the output folder:
+After the **prepare** step, each clip gets a plain-text transcript at:
 
 ```
-reel_d_subtitles/myvideo.txt
+transcripts/myvideo/transcript.txt
 ```
 
-One line per subtitle entry. You can fix typos, punctuation, or emphasis here. The next time you run the pipeline, edited transcripts are automatically applied back to the `.srt` before burning — no manual `--step apply` needed.
+One line per subtitle entry. You can fix typos, punctuation, or emphasis here. The next time you run the pipeline, an edited transcript (newer than the burned SRT) is automatically applied back to the `.srt` before burning — no manual `--step apply` needed.
 
-**The `.txt` file is never overwritten unless you explicitly use `--forceall`.**
+**`transcript.txt` is never overwritten unless you explicitly use `--forceall`** (which backs it up first).
 
 ### Word emphasis
 
@@ -127,9 +159,13 @@ python3 process_reels.py --model large --lang en
 |--------|---------|-------------|
 | `--model` | `base` | Whisper model size: `tiny` `base` `small` `medium` `large` |
 | `--lang` | _(auto)_ | Force language, e.g. `en`, `de`, `fr` |
-| `--max-words` | `5` (reels) / `8` (videos) | Max words per subtitle line |
+| `--max-words` | `5` (reels) / `8` (videos) | Max words per subtitle line — **fixed when the transcript is first created**; changing it later has no effect unless you re-transcribe with `--forceall` |
 
 Larger models are slower but more accurate. Use `large` for tricky accents or technical vocabulary.
+
+All three options are consumed by the **prepare** step. Run it (or the full
+`process_*.py` pipeline) with the options set — passing them only to
+`subtitle_*.py` when a shared transcript already exists does nothing.
 
 ---
 
@@ -150,19 +186,21 @@ Larger models are slower but more accurate. Use `large` for tricky accents or te
 The individual scripts can also be called directly for more control:
 
 ```bash
-# Prepare only
+# Prepare only (audio/video + Whisper transcript + thumbnails)
 python3 prepare_reels.py --force
+python3 prepare_reels.py --model large --lang en    # transcription options live here
 
-# Transcribe only
-python3 subtitle_reels.py --step transcribe --model large
+# Build SRT from the shared transcript
+python3 subtitle_reels.py --step transcribe
 
-# Apply edited TXT back to SRT manually
+# Apply edited transcript.txt back to SRT manually
 python3 subtitle_reels.py --step apply
 
 # Burn subtitles only
 python3 subtitle_reels.py --step burn
 
 # Same commands work for videos
+python3 prepare_videos.py --model large --lang en
 python3 subtitle_videos.py --step transcribe
 python3 subtitle_videos.py --step burn --force
 ```

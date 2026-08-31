@@ -110,8 +110,8 @@ def main():
                         choices=["tiny", "base", "small", "medium", "large"])
     parser.add_argument("--lang",   default=None,
                         help="Force language, e.g. 'en', 'de' (auto-detect if omitted)")
-    parser.add_argument("--max-words", type=int, default=5,
-                        help="Max words per subtitle line (default: 5)")
+    parser.add_argument("--max-words", type=int, default=8,
+                        help="Max words per subtitle line (default: 8)")
     parser.add_argument("--no-outro", action="store_true",
                         help="Skip the outro step even when running --step all")
     parser.add_argument("--no-reel", action="store_true",
@@ -119,6 +119,8 @@ def main():
     parser.add_argument("--input", default=None,
                         help="Single file, glob pattern, or folder to process "
                              "(default: full originals folder)")
+    parser.add_argument("--transcripts", default="transcripts",
+                        help="Shared transcripts folder (default: transcripts)")
     args = parser.parse_args()
     force     = args.force or args.forceall
     force_all = args.forceall
@@ -127,8 +129,15 @@ def main():
         print("━" * 40)
         print("  Step 1 / 3 — Prepare")
         print("━" * 40)
-        cmd = [sys.executable, "prepare_videos.py"]
-        if force:
+        cmd = [sys.executable, "prepare_videos.py",
+               "--model",       args.model,
+               "--max-words",   str(args.max_words),
+               "--transcripts", args.transcripts]
+        if args.lang:
+            cmd += ["--lang", args.lang]
+        if force_all:
+            cmd.append("--forceall")
+        elif force:
             cmd.append("--force")
         if args.no_reel:
             cmd.append("--no-reel")
@@ -142,9 +151,10 @@ def main():
         print("  Step 2 / 3 — Subtitles")
         print("━" * 40)
         cmd = [sys.executable, "subtitle_videos.py",
-               "--model", args.model,
-               "--max-words", str(args.max_words),
-               "--input", _step_input(args.input, "video_c_sources")]
+               "--model",       args.model,
+               "--max-words",   str(args.max_words),
+               "--transcripts", args.transcripts,
+               "--input",       _step_input(args.input, "video_c_sources")]
         if args.lang:
             cmd += ["--lang", args.lang]
         if force_all:

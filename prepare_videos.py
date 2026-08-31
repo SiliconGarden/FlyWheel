@@ -144,20 +144,26 @@ def split_segment_words(start: float, end: float, words: list[dict],
 
 def transcribe_to_folder(video_path: Path, transcripts_dir: Path,
                          model_name: str, language: Optional[str],
-                         max_words: int, force: bool = False) -> None:
+                         max_words: int, force: bool = False,
+                         force_all: bool = False) -> None:
     """
     Transcribe video audio with Whisper → transcripts/{stem}/.
-    Writes transcript.words.json and transcript.txt (txt only if not already present).
-    Skips entirely if transcript.words.json already exists and not force.
+    Writes transcript.words.json and transcript.txt.
+    - Skips entirely if transcript.words.json already exists and neither
+      force nor force_all is set.
+    - transcript.txt is never overwritten unless force_all is set, in which
+      case a timestamped backup is created first.
     """
+    import shutil
     import whisper
+    from datetime import datetime
     stem       = video_path.stem
     out        = transcripts_dir / stem
     out.mkdir(parents=True, exist_ok=True)
     words_path = out / "transcript.words.json"
     txt_path   = out / "transcript.txt"
 
-    if words_path.exists() and not force:
+    if words_path.exists() and not force and not force_all:
         print(f"  ⏭️  Transcript exists: {stem}  — skipping (use --force to redo)")
         return
 
@@ -184,14 +190,18 @@ def transcribe_to_folder(video_path: Path, transcripts_dir: Path,
 
     words_path.write_text(json.dumps(words_data, indent=2), encoding="utf-8")
 
+    fresh_txt = "\n".join(e["text"].strip() for e in words_data) + "\n"
     if not txt_path.exists():
-        txt_path.write_text(
-            "\n".join(e["text"].strip() for e in words_data) + "\n",
-            encoding="utf-8",
-        )
+        txt_path.write_text(fresh_txt, encoding="utf-8")
         print(f"  ✏️  TXT created: {txt_path}  ← edit this to fix transcription errors")
+    elif force_all:
+        stamp  = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup = txt_path.with_name(f"{txt_path.stem}_backup_{stamp}.txt")
+        shutil.copy2(txt_path, backup)
+        txt_path.write_text(fresh_txt, encoding="utf-8")
+        print(f"  ✏️  TXT replaced: {txt_path}  (backup → {backup.name})")
     else:
-        print(f"  ✏️  TXT kept:    {txt_path}  (not overwritten)")
+        print(f"  ✏️  TXT kept:    {txt_path}  (not overwritten — use --forceall to replace)")
 
     print(f"  ✅ Transcript: {stem}/  ({idx - 1} entries)")
 
@@ -663,7 +673,10 @@ def main():
     parser.add_argument("--output",      default="video_c_sources",
                         help="Output folder (default: video_c_sources)")
     parser.add_argument("--force",       action="store_true",
-                        help="Overwrite existing output files")
+                        help="Overwrite existing output files (never overwrites edited TXT)")
+    parser.add_argument("--forceall",    action="store_true",
+                        help="Like --force, but also refresh the shared transcript.txt "
+                             "(a timestamped backup is created first)")
     parser.add_argument("--no-reel",           action="store_true",
                         help="Skip portrait reel crop output")
     parser.add_argument("--reel-output",       default=REEL_OUTPUT_DIR,
@@ -688,6 +701,8 @@ def main():
     parser.add_argument("--max-words", type=int, default=8,
                         help="Max words per subtitle line (default: 8)")
     args = parser.parse_args()
+    force     = args.force or args.forceall
+    force_all = args.forceall
 
     check_dependencies()
 
@@ -720,12 +735,13 @@ def main():
     print(f"\n📂 Found {len(videos)} video(s)\n{'─' * 40}")
     for video in videos:
         print(f"\n▶  {video}")
-        out_path = process_video(video, output_dir, args.force, reel_dir=reel_dir,
+        out_path = process_video(video, output_dir, force, reel_dir=reel_dir,
                                  thumbnails_dir=thumbnails_dir,
                                  reel_thumbnails_dir=reel_thumbnails_dir)
         if transcripts_dir and out_path.exists():
             transcribe_to_folder(out_path, transcripts_dir,
-                                 args.model, args.lang, args.max_words, force=args.force)
+                                 args.model, args.lang, args.max_words,
+                                 force=force, force_all=force_all)
 
     print(f"\n🎉 Done! Processed {len(videos)} video(s).")
 

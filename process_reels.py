@@ -133,7 +133,9 @@ def main():
                "--thumbnails",  "reel_a_thumbnails"]
         if args.lang:
             cmd += ["--lang", args.lang]
-        if force:
+        if force_all:
+            cmd.append("--forceall")
+        elif force:
             cmd.append("--force")
         if args.input:
             cmd += ["--input", args.input]

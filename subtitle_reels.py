@@ -5,13 +5,19 @@ Uses OpenAI Whisper for transcription and ffmpeg for burning subtitles.
 
 Workflow:
     1. python subtitle_reels.py --step transcribe   # → .srt  .words.json  .txt
-    2.  edit  reel_subtitles/<name>.txt             # fix typos, punctuation, etc.
+    2.  edit  transcripts/<name>/transcript.txt      # fix typos, punctuation, etc.
     3. python subtitle_reels.py --step apply        # apply edits back to .srt
     4. python subtitle_reels.py --step burn         # render video
 
     python subtitle_reels.py                        # shortcut: transcribe + burn (skips step 2-3)
     python subtitle_reels.py --model large --lang fr
     python subtitle_reels.py --max-words 5
+
+When a shared transcript (transcripts/<name>/transcript.words.json, written by
+prepare_reels.py / prepare_videos.py) exists, step 1 just reformats it into an
+SRT — Whisper is not re-run, so --model / --lang / --max-words have no effect on
+the text there. An edited transcript.txt newer than the SRT is applied
+automatically before burn.
 """
 
 import argparse

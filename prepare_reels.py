@@ -2,13 +2,17 @@
 """
 prepare_reels.py — Preprocess raw recordings before subtitle generation.
 
-Takes videos from original_reels/, applies voice audio optimisation and
-loudness normalisation, scales to 720 px wide, and saves to reel_source/.
+Takes videos from reel_a_originals/, applies voice audio optimisation and
+loudness normalisation, scales to 720 px wide, and saves to reel_c_sources/.
+Also transcribes each clip with Whisper into the shared transcripts/{stem}/
+folder and extracts candidate thumbnails into reel_a_thumbnails/staging/.
 
 Usage:
     python3 prepare_reels.py
-    python3 prepare_reels.py --input original_reels --output reel_source
-    python3 prepare_reels.py --force    # overwrite existing outputs
+    python3 prepare_reels.py --input reel_a_originals --output reel_c_sources
+    python3 prepare_reels.py --force       # overwrite existing outputs (keeps edited TXT)
+    python3 prepare_reels.py --forceall    # also refresh transcript.txt (backup first)
+    python3 prepare_reels.py --no-transcribe --no-thumbnails   # audio/video only
 
 Audio chain:
     1. highpass=f=80          remove low-frequency rumble
@@ -238,22 +242,28 @@ def split_segment_words(start: float, end: float, words: list[dict],
 
 def transcribe_to_folder(video_path: Path, transcripts_dir: Path,
                          model_name: str, language: Optional[str],
-                         max_words: int, force: bool = False) -> None:
+                         max_words: int, force: bool = False,
+                         force_all: bool = False) -> None:
     """
     Transcribe video audio with Whisper → transcripts/{stem}/.
-    Writes transcript.words.json and transcript.txt (txt only if not already present).
-    Skips entirely if transcript.words.json already exists and not force.
-    This handles the shared case: if prepare_videos.py already transcribed the stem,
-    this call is a no-op.
+    Writes transcript.words.json and transcript.txt.
+    - Skips entirely if transcript.words.json already exists and neither
+      force nor force_all is set.
+    - transcript.txt is never overwritten unless force_all is set, in which
+      case a timestamped backup is created first.
+    This handles the shared case: if prepare_videos.py already transcribed the
+    stem, this call is a no-op (unless forced).
     """
+    import shutil
     import whisper
+    from datetime import datetime
     stem       = video_path.stem
     out        = transcripts_dir / stem
     out.mkdir(parents=True, exist_ok=True)
     words_path = out / "transcript.words.json"
     txt_path   = out / "transcript.txt"
 
-    if words_path.exists() and not force:
+    if words_path.exists() and not force and not force_all:
         print(f"  ⏭️  Transcript exists: {stem}  — skipping")
         return
 
@@ -280,14 +290,18 @@ def transcribe_to_folder(video_path: Path, transcripts_dir: Path,
 
     words_path.write_text(json.dumps(words_data, indent=2), encoding="utf-8")
 
+    fresh_txt = "\n".join(e["text"].strip() for e in words_data) + "\n"
     if not txt_path.exists():
-        txt_path.write_text(
-            "\n".join(e["text"].strip() for e in words_data) + "\n",
-            encoding="utf-8",
-        )
+        txt_path.write_text(fresh_txt, encoding="utf-8")
         print(f"  ✏️  TXT created: {txt_path}  ← edit this to fix transcription errors")
+    elif force_all:
+        stamp  = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup = txt_path.with_name(f"{txt_path.stem}_backup_{stamp}.txt")
+        shutil.copy2(txt_path, backup)
+        txt_path.write_text(fresh_txt, encoding="utf-8")
+        print(f"  ✏️  TXT replaced: {txt_path}  (backup → {backup.name})")
     else:
-        print(f"  ✏️  TXT kept:    {txt_path}  (not overwritten)")
+        print(f"  ✏️  TXT kept:    {txt_path}  (not overwritten — use --forceall to replace)")
 
     print(f"  ✅ Transcript: {stem}/  ({idx - 1} entries)")
 
@@ -340,7 +354,10 @@ def main():
     parser.add_argument("--output", default="reel_c_sources",
                         help="Output folder (default: reel_c_sources)")
     parser.add_argument("--force",  action="store_true",
-                        help="Overwrite existing output files")
+                        help="Overwrite existing output files (never overwrites edited TXT)")
+    parser.add_argument("--forceall", action="store_true",
+                        help="Like --force, but also refresh the shared transcript.txt "
+                             "(a timestamped backup is created first)")
     parser.add_argument("--no-transcribe",  action="store_true",
                         help="Skip Whisper transcription (audio/video processing only)")
     parser.add_argument("--transcripts",    default="transcripts",
@@ -362,6 +379,8 @@ def main():
     parser.add_argument("--no-thumbnails", action="store_true",
                         help="Skip thumbnail extraction")
     args = parser.parse_args()
+    force     = args.force or args.forceall
+    force_all = args.forceall
 
     check_dependencies()
 
@@ -382,13 +401,14 @@ def main():
     print(f"\n📂 Found {len(videos)} video(s)\n{'─' * 40}")
     for video in videos:
         print(f"\n▶  {video}")
-        out_path = process_video(video, output_dir, args.force)
+        out_path = process_video(video, output_dir, force)
         if transcripts_dir and out_path.exists():
             transcribe_to_folder(out_path, transcripts_dir,
-                                 args.model, args.lang, args.max_words, force=args.force)
+                                 args.model, args.lang, args.max_words,
+                                 force=force, force_all=force_all)
         if thumbnails_dir and out_path.exists():
             extract_thumbnails(out_path, thumbnails_dir,
-                               args.thumb_count, args.thumb_oversample, args.force)
+                               args.thumb_count, args.thumb_oversample, force)
 
     print(f"\n🎉 Done! Processed {len(videos)} video(s).")
 
